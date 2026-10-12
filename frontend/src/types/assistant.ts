@@ -11,6 +11,40 @@ export type AssistantState =
   | 'error';
 
 /**
+ * LiveKit voice session connection lifecycle status.
+ */
+export type VoiceSessionStatus =
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'error';
+
+/**
+ * Standard error shape for voice session errors.
+ */
+export interface VoiceSessionError {
+  type: 'permission' | 'connection' | 'configuration' | 'unknown';
+  message: string;
+  details?: string;
+}
+
+/**
+ * Return signature of useVoiceSession hook.
+ */
+export interface UseVoiceSessionReturn {
+  status: VoiceSessionStatus;
+  assistantState: AssistantState;
+  error: VoiceSessionError | null;
+  isMicrophoneEnabled: boolean;
+  roomName: string | null;
+  participantCount: number;
+  connect: () => Promise<void>;
+  disconnect: () => Promise<void>;
+  toggleSession: () => Promise<void>;
+  setMicrophoneEnabled: (enabled: boolean) => Promise<void>;
+}
+
+/**
  * Human-readable metadata and description for each assistant state.
  */
 export interface StateMetadata {

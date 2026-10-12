@@ -4,38 +4,60 @@ Voxara AI is a real-time Agentic Voice AI assistant designed for multimodal, res
 
 ---
 
-## High-Level Architecture (Current & Planned)
+## High-Level Architecture (Current: Step 2)
 
 ```mermaid
 flowchart TD
-    subgraph Frontend["Frontend Client (React + Vite + Tailwind + Framer Motion)"]
-        UI["Landing Page / Assistant UI"]
+    subgraph Client["Frontend Client (React + TypeScript + Vite)"]
+        UI["Landing Page UI"]
         Orb["AssistantOrb (Visual Feedback States)"]
-        Input["MessageInput (Text & Voice Entrypoint)"]
-        Hook["useAssistantState (State Machine)"]
+        MicBtn["MessageInput & Mic Button"]
+        Hook["useVoiceSession Hook"]
+        VoiceService["voiceService (HTTP Client)"]
+        LKClient["LiveKit WebRTC Client (livekit-client)"]
     end
 
-    subgraph Backend["Backend Engine (Planned - Future Steps)"]
-        WS["WebSocket / WebRTC Audio Streaming"]
-        Orch["Agent Orchestration (LangGraph / State Engine)"]
-        LLM["Multimodal LLM (Gemini Live API)"]
-        Tools["MCP Tool Execution Engine"]
+    subgraph Backend["Backend Infrastructure (FastAPI + Python)"]
+        API["FastAPI Gateway (/health, /api/voice/status)"]
+        TokenGen["TokenService (/api/voice/token)"]
+        Config["Config & Secret Validation (.env)"]
+        LKAgent["LiveKit Voice Agent Worker (livekit-agents)"]
     end
 
+    subgraph Cloud["LiveKit WebRTC Infrastructure"]
+        LKCloud["LiveKit Cloud / WebRTC SFU Server"]
+    end
+
+    subgraph Future["Future AI Pipelines (Step 4+)"]
+        Gemini["Multimodal LLM (Gemini Live)"]
+        LangGraph["Agentic Orchestration (LangGraph)"]
+        MCP["MCP Tools Engine"]
+    end
+
+    %% Frontend Interactions
     UI --> Orb
-    UI --> Input
-    Input --> Hook
-    Orb --> Hook
+    UI --> MicBtn
+    MicBtn -->|Toggle Voice| Hook
+    Hook -->|Request Token| VoiceService
+    VoiceService -->|POST /api/voice/token| TokenGen
+    TokenGen --> Config
+    Hook -->|Connect WebRTC Session| LKClient
+    LKClient <==>|Bidirectional Audio Streaming| LKCloud
+    LKAgent <==>|Room Worker Participation| LKCloud
 
-    Hook -.->|Future Stream / RPC| WS
-    WS -.-> Orch
-    Orch -.-> LLM
-    Orch -.-> Tools
+    %% State Synchronization
+    LKClient -.->|isSpeaking / ActiveSpeakers| Hook
+    Hook -.->|idle / listening / speaking / error| Orb
+
+    %% Future Connections
+    LKAgent -.->|Planned Step 4| Gemini
+    LKAgent -.->|Planned Step 5| LangGraph
+    LKAgent -.->|Planned Step 6| MCP
 ```
 
 ---
 
-## Directory Structure (Step 1)
+## Directory Structure
 
 ```
 voxara-ai/
@@ -43,40 +65,70 @@ voxara-ai/
 │   ├── ARCHITECTURE.md          # System architecture and directory documentation
 │   └── DEVELOPMENT_PLAN.md      # Phased development roadmap
 ├── backend/
-│   └── README.md                # Placeholder for backend services
+│   ├── app/
+│   │   ├── routes/
+│   │   │   ├── __init__.py
+│   │   │   └── voice.py         # /api/voice/token & /api/voice/status endpoints
+│   │   ├── services/
+│   │   │   ├── __init__.py
+│   │   │   └── token_service.py # LiveKit JWT AccessToken generation
+│   │   ├── __init__.py
+│   │   ├── agent.py             # LiveKit Voice Agent worker entrypoint
+│   │   ├── config.py            # Pydantic Settings & environment variable validation
+│   │   └── main.py              # FastAPI app setup, CORS, lifespan, and /health
+│   ├── .env.example             # Template for required environment variables
+│   ├── requirements.txt         # FastAPI, LiveKit SDK & Agent dependencies
+│   ├── venv/                    # Python virtual environment
+│   └── README.md                # Backend service documentation
 ├── frontend/
 │   ├── public/                  # Static assets
 │   ├── src/
-│   │   ├── app/                 # Application shell and top-level pages
+│   │   ├── app/
+│   │   │   └── LandingPage.tsx  # Main application view with voice controls
 │   │   ├── components/
-│   │   │   ├── assistant/       # Assistant-specific UI (Orb, input, state indicator)
-│   │   │   └── layout/          # Layout wrappers, headers, footers
-│   │   ├── hooks/               # Custom React hooks (useAssistantState)
-│   │   ├── types/               # TypeScript interfaces and union types
-│   │   ├── lib/                 # Shared utility functions and style helpers
-│   │   ├── index.css            # Global CSS and Tailwind directives
-│   │   └── main.tsx             # React entry point
-│   ├── index.html               # Vite HTML template
-│   ├── package.json             # Frontend package definition
-│   ├── tailwind.config.js       # Tailwind CSS configuration
-│   ├── postcss.config.js        # PostCSS configuration
-│   ├── tsconfig.json            # TypeScript configuration
-│   └── vite.config.ts           # Vite configuration
-├── .gitignore                   # Root gitignore
-└── README.md                    # Project overview & running instructions
+│   │   │   ├── assistant/
+│   │   │   │   ├── AssistantOrb.tsx   # Animated visual state orb
+│   │   │   │   ├── MessageInput.tsx   # Input bar & mic button
+│   │   │   │   └── StateSelector.tsx  # Dev preview state selector
+│   │   │   └── layout/
+│   │   │       ├── Header.tsx         # Header with live state pill
+│   │   │       └── Container.tsx      # Responsive container
+│   │   ├── hooks/
+│   │   │   ├── useAssistantState.ts   # State management hook
+│   │   │   └── useVoiceSession.ts     # LiveKit WebRTC session hook
+│   │   ├── lib/
+│   │   │   └── voiceService.ts        # API client for backend voice endpoints
+│   │   ├── types/
+│   │   │   └── assistant.ts           # State, session, and error interfaces
+│   │   ├── index.css                  # Global CSS & Tailwind directives
+│   │   └── main.tsx                   # React root entrypoint
+│   ├── index.html
+│   ├── package.json
+│   ├── tailwind.config.js
+│   ├── tsconfig.json
+│   └── vite.config.ts
+├── .gitignore                   # Root gitignore (env files, node_modules, venv, bytecode)
+└── README.md                    # Project overview & startup instructions
 ```
 
 ---
 
-## Major Directory Roles
+## Voice Session State Machine
 
-| Directory | Responsibility |
-| :--- | :--- |
-| `frontend/src/app/` | Main application views, page compositions, and layout boundaries. |
-| `frontend/src/components/assistant/` | Core assistant interaction components: `AssistantOrb` (animated visual state representation), `MessageInput` (accessible text/speech input bar), and `StateSelector` (dev state preview). |
-| `frontend/src/components/layout/` | Structural page components (e.g. `Header`, `Container`, `Footer`) ensuring responsive spacing and viewport alignment. |
-| `frontend/src/hooks/` | Custom hooks isolating state management, side effects, and lifecycle hooks (`useAssistantState`). |
-| `frontend/src/types/` | Strict TypeScript domain models, state union types, and interface contracts. |
-| `frontend/src/lib/` | Pure utility functions, class name mergers, and animation constants. |
-| `backend/` | Target location for FastAPI services, voice WebSocket connections, and agent tool execution. |
-| `docs/` | Architectural specifications, design rationales, and phase-by-phase planning. |
+| Assistant State | Trigger / Source | Visual Representation |
+| :--- | :--- | :--- |
+| `idle` | Connected room with no active speakers, or standby. | Ambient warm golden breathing pulse. |
+| `connecting` | Fetching token and negotiating WebRTC peer connection. | Radiant swirling transition. |
+| `listening` | WebRTC participant's local audio track is unmuted and active. | Expanded radiant yellow wave. |
+| `speaking` | Remote assistant participant is actively transmitting audio. | Vocal resonance modulation. |
+| `thinking` | LLM reasoning / processing (future phase). | Swirling gradient rotation. |
+| `executing` | Agentic workflow / tool execution (future phase). | Rhythmic operational oscillation. |
+| `error` | Microphone permission denied or LiveKit configuration error. | Soft coral/crimson indicator with diagnostic alert. |
+
+---
+
+## Security Model
+
+1. **Zero Secret Exposure**: LiveKit API secret (`LIVEKIT_API_SECRET`) resides solely on the backend inside environment variables and is never transmitted or exposed to the client.
+2. **Short-Lived Access Tokens**: The backend issues signed JWT tokens with 15-minute time-to-live (`TTL`) granting restricted room access (`can_publish`, `can_subscribe`, `can_publish_data`).
+3. **No Unauthenticated Secret Access**: Credentials and sensitive room parameters are strictly managed via Pydantic settings.

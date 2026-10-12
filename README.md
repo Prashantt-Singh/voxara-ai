@@ -4,48 +4,96 @@ Voxara AI is a modern, real-time Agentic Voice AI assistant designed to deliver 
 
 ---
 
-## Current Status: Step 1 — Project Foundation
+## Current Status: Step 2 — Real-Time Voice Infrastructure
 
-This repository currently implements **Step 1: Project Foundation**. In this phase, we established the clean frontend architecture, user experience baseline, and tactile animated visual state machine.
+This repository implements **Step 2: Real-Time Voice Infrastructure**. In this phase, we integrated LiveKit's WebRTC infrastructure into both frontend and backend to enable genuine real-time bidirectional audio sessions without fabricating AI responses.
 
-### What is implemented in Step 1:
-- **Clean modular architecture**: Strict separation into `app/`, `components/assistant/`, `components/layout/`, `hooks/`, `types/`, and `lib/`.
-- **Minimalist landing page**: Inspired by modern tactile interfaces with a warm luminous yellow-orange gradient palette, clean typography, and spacious layout.
-- **`AssistantOrb` Component**: Luminous visual representation with support for 6 visual demonstration states:
-  - `idle` (ambient warm breathing pulse)
-  - `listening` (expanded radiant wave)
-  - `thinking` (swirling gradient rotation)
-  - `executing` (rhythmic operational oscillation)
-  - `speaking` (vocal resonance modulation)
-  - `error` (soft coral/crimson indicator)
-- **`useAssistantState` Hook**: State management hook encapsulating assistant state transitions.
-- **`MessageInput` Component**: Accessible pill input with plus action button, text input, microphone button, and keyboard submission (Enter).
-- **Interactive State Preview**: Minimalist footer selector to preview each visual state.
-- **Accessibility**: Semantic HTML, ARIA attributes, keyboard navigation, and full support for `prefers-reduced-motion`.
-- **System Documentation**: High-level architectural specifications in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and phased milestones in [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md).
+### Implemented in Step 2:
+- **Frontend LiveKit WebRTC Client**: Integrated official `livekit-client` and `@livekit/components-react`.
+- **`useVoiceSession` Hook**: Full lifecycle management covering `disconnected`, `connecting`, `connected`, and `error` states, plus active speaking detection.
+- **`voiceService` Module**: Robust client communicating with backend token and status endpoints.
+- **Microphone Connection Integration**: Clicking the mic button initiates token retrieval and WebRTC room connection; clicking again tears down the session and releases microphone tracks.
+- **Live Visual State Binding**: The luminous `AssistantOrb` dynamically reacts to real WebRTC events:
+  - `listening` when user microphone detects active vocal input
+  - `speaking` when remote agent/participant emits audio
+  - `idle` during ambient connected quietude
+  - `thinking` during WebRTC connection negotiation
+  - `error` with explanatory diagnostics if permissions or credentials fail
+- **Clear Error Diagnostics**: In-UI alerts distinguish between browser microphone permission denials and backend credential configuration errors.
+- **Backend FastAPI Service (`backend/app/`)**:
+  - `GET /health`: Overall service health
+  - `GET /api/voice/status`: LiveKit readiness verification
+  - `POST /api/voice/token`: Secure short-lived JWT access token generation
+- **Security & Secret Isolation**: LiveKit API secret never reaches the browser; all keys are validated through Pydantic settings from `.env`.
+- **LiveKit Agent Entrypoint (`backend/app/agent.py`)**: Entrypoint skeleton for the agent worker to join rooms and handle audio streams.
 
-### Features NOT connected yet:
-In accordance with Step 1 instructions, the following features are deliberately **not implemented** at this stage and will be developed in future phases:
-- Real microphone audio capture and Web Audio streaming (Step 2)
-- FastAPI backend server and WebSocket communication (Step 3)
-- Gemini Live multimodal voice-to-voice LLM integration (Step 4)
-- LangGraph agentic orchestration and state graphs (Step 5)
-- Model Context Protocol (MCP) tool integrations (Step 6)
-- Backend agent dashboards and telemetry (Step 6 & 7)
+### Explicit Scope Boundaries:
+The following capabilities belong to upcoming phases and are **not yet implemented**:
+- Speech recognition (ASR) transcription pipeline (Step 3/4)
+- Gemini Live multimodal reasoning and conversational voice synthesis (Step 4)
+- LangGraph orchestration and decision loops (Step 5)
+- MCP tool execution engine and dashboard (Step 6)
 
-Submitting queries in the UI displays an explicit, honest local confirmation notice without fabricating AI responses.
+---
+
+## Prerequisites
+
+- **Node.js**: v18.0.0 or higher
+- **Python**: v3.10 or higher (v3.12 recommended)
+- **LiveKit Account**: A free project at [LiveKit Cloud](https://cloud.livekit.io) (or a self-hosted LiveKit instance)
 
 ---
 
 ## Getting Started
 
-### Prerequisites
-- Node.js (v18.0.0 or higher recommended)
-- npm or pnpm
+### 1. Backend Setup
 
-### Running the Application
+1. Open your terminal and navigate to the `backend` directory:
+   ```bash
+   cd backend
+   ```
 
-1. Open your terminal and navigate to the frontend directory:
+2. Create and activate a Python virtual environment:
+   ```bash
+   # Windows
+   python -m venv venv
+   .\venv\Scripts\activate
+
+   # macOS / Linux
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
+
+3. Install backend dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Configure environment variables:
+   ```bash
+   cp .env.example .env
+   ```
+   Open `backend/.env` and insert your LiveKit project credentials from [LiveKit Cloud](https://cloud.livekit.io):
+   ```ini
+   LIVEKIT_URL=wss://your-project.livekit.cloud
+   LIVEKIT_API_KEY=your_livekit_api_key
+   LIVEKIT_API_SECRET=your_livekit_api_secret
+   LIVEKIT_DEFAULT_ROOM=voxara-voice-room
+   HOST=0.0.0.0
+   PORT=8000
+   ```
+
+5. Start the FastAPI development server:
+   ```bash
+   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+   ```
+   The backend API will run on `http://localhost:8000`.
+
+---
+
+### 2. Frontend Setup
+
+1. In a separate terminal, navigate to the `frontend` directory:
    ```bash
    cd frontend
    ```
@@ -55,27 +103,54 @@ Submitting queries in the UI displays an explicit, honest local confirmation not
    npm install
    ```
 
-3. Start the Vite local development server:
+3. (Optional) Configure environment variables:
+   ```bash
+   cp .env.example .env
+   ```
+   Default `VITE_BACKEND_URL=http://localhost:8000`.
+
+4. Start the Vite local development server:
    ```bash
    npm run dev
    ```
 
-4. Open your browser and navigate to the local URL (typically `http://localhost:5173`).
+5. Open your browser and navigate to `http://localhost:5173`.
 
-### Building and Type Checking
+---
 
-To verify TypeScript types and create an optimized production build:
+## How to Test the Voice Connection
+
+1. Ensure the backend is running (`http://localhost:8000`).
+2. Open the frontend at `http://localhost:5173`.
+3. Click the **Microphone Button** in the input bar or click the **Orb**.
+4. **If LiveKit credentials are configured in `backend/.env`**:
+   - The browser prompts for microphone permission.
+   - Upon granting permission, the pill changes to **"LiveKit Connected"**.
+   - Speaking into your microphone triggers the luminous orb's radiant `listening` animation.
+   - Clicking the mic button or "Leave" cleanly disconnects and releases the audio tracks.
+5. **If LiveKit credentials are missing or unconfigured**:
+   - The UI surfaces a clear diagnostic alert stating credentials need to be set in `backend/.env`.
+   - The orb transitions to the soft coral `error` indicator without crashing.
+6. **If microphone permission is denied by the browser**:
+   - A descriptive "Microphone Permission Error" alert is presented guiding the user to grant access.
+
+---
+
+## Verification & Type Checking
+
+To verify the frontend build:
 ```bash
-npm run build
+npm --prefix frontend run build
+npm --prefix frontend run lint
 ```
 
-To run TypeScript compiler verification standalone:
+To verify the backend imports and configuration:
 ```bash
-npx tsc --noEmit
+.\backend\venv\Scripts\python -c "from app.config import settings; print(settings.validate_livekit_credentials())"
 ```
 
 ---
 
-## Roadmap & Architecture
-- Detailed system design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Step-by-step implementation plan: [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md)
+## Architecture & Roadmap
+- High-level system architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Development plan & milestones: [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md)

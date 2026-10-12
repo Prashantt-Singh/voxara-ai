@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Plus, Mic, ArrowUp } from 'lucide-react';
 
+import type { VoiceSessionStatus } from '../../types/assistant';
+
 interface MessageInputProps {
   /** Callback fired when a message or voice input is initiated */
   onSubmit?: (content: string) => void;
@@ -12,6 +14,10 @@ interface MessageInputProps {
   placeholder?: string;
   /** Disabled state */
   disabled?: boolean;
+  /** Current LiveKit voice session status */
+  voiceSessionStatus?: VoiceSessionStatus;
+  /** Whether the microphone is actively capturing in session */
+  isMicrophoneActive?: boolean;
 }
 
 /**
@@ -24,8 +30,13 @@ export const MessageInput: React.FC<MessageInputProps> = ({
   onMicClick,
   placeholder = 'Ask anything or type a prompt...',
   disabled = false,
+  voiceSessionStatus = 'disconnected',
+  isMicrophoneActive = false,
 }) => {
   const [query, setQuery] = useState('');
+
+  const isConnecting = voiceSessionStatus === 'connecting';
+  const isConnected = voiceSessionStatus === 'connected';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,6 +56,13 @@ export const MessageInput: React.FC<MessageInputProps> = ({
     }
   };
 
+  const getMicButtonTitle = () => {
+    if (isConnecting) return 'Connecting voice session...';
+    if (isConnected) return isMicrophoneActive ? 'End voice session (mic live)' : 'End voice session';
+    if (voiceSessionStatus === 'error') return 'Voice session error (click to retry)';
+    return 'Start LiveKit real-time voice session';
+  };
+
   return (
     <form
       onSubmit={handleSubmit}
@@ -52,7 +70,11 @@ export const MessageInput: React.FC<MessageInputProps> = ({
       role="search"
       aria-label="Assistant message input"
     >
-      <div className="relative flex items-center bg-white/90 backdrop-blur-md rounded-full border border-neutral-200/90 shadow-[0_4px_24px_rgba(0,0,0,0.06)] hover:border-neutral-300 focus-within:border-amber-400 focus-within:ring-2 focus-within:ring-amber-200/50 transition-all px-2.5 py-1.5 sm:px-3 sm:py-2">
+      <div className={`relative flex items-center bg-white/90 backdrop-blur-md rounded-full border shadow-[0_4px_24px_rgba(0,0,0,0.06)] transition-all px-2.5 py-1.5 sm:px-3 sm:py-2 ${
+        isConnected
+          ? 'border-amber-400 ring-2 ring-amber-200/60'
+          : 'border-neutral-200/90 hover:border-neutral-300 focus-within:border-amber-400 focus-within:ring-2 focus-within:ring-amber-200/50'
+      }`}>
         {/* Plus / Add Action Button */}
         <button
           type="button"
@@ -69,13 +91,13 @@ export const MessageInput: React.FC<MessageInputProps> = ({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder}
+          placeholder={isConnected ? 'Voice session connected. Speak or type...' : placeholder}
           disabled={disabled}
           aria-label="Message Voxara"
           className="flex-1 min-w-0 bg-transparent px-3 py-1.5 text-sm sm:text-base text-neutral-800 placeholder-neutral-400 focus:outline-none font-normal"
         />
 
-        {/* Right Action: Send Button if query exists, else Microphone Button */}
+        {/* Right Action: Send Button if query exists, else Voice Session / Mic Button */}
         {query.trim().length > 0 ? (
           <button
             type="submit"
@@ -88,8 +110,16 @@ export const MessageInput: React.FC<MessageInputProps> = ({
           <button
             type="button"
             onClick={onMicClick}
-            aria-label="Start voice interaction"
-            className="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-full text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+            disabled={isConnecting}
+            title={getMicButtonTitle()}
+            aria-label={getMicButtonTitle()}
+            className={`relative flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-full transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
+              isConnected
+                ? 'bg-amber-500 text-white shadow-md shadow-amber-500/25 hover:bg-amber-600 animate-pulse'
+                : isConnecting
+                ? 'bg-amber-100 text-amber-600 cursor-wait animate-spin'
+                : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100'
+            }`}
           >
             <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
