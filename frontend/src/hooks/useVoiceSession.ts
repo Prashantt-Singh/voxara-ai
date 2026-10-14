@@ -42,12 +42,17 @@ export function useVoiceSession(): UseVoiceSessionReturn {
   const [isMicrophoneEnabled, setIsMicrophoneEnabled] = useState<boolean>(false);
   const [roomName, setRoomName] = useState<string | null>(null);
   const [participantCount, setParticipantCount] = useState<number>(0);
+  const [agentJoined, setAgentJoined] = useState<boolean>(false);
 
   const roomRef = useRef<Room | null>(null);
   const isConnectingRef = useRef<boolean>(false);
 
   // Compute visual assistant state from real WebRTC room activity
   const updateAssistantVoiceState = useCallback((room: Room) => {
+    // Check if any remote participant is present (e.g. Voxara agent)
+    const hasRemoteAgent = room.remoteParticipants.size > 0;
+    setAgentJoined(hasRemoteAgent);
+
     if (room.state !== ConnectionState.Connected) {
       if (room.state === ConnectionState.Connecting || room.state === ConnectionState.Reconnecting) {
         setAssistantState('thinking');
@@ -275,6 +280,7 @@ export function useVoiceSession(): UseVoiceSessionReturn {
     isMicrophoneEnabled,
     roomName,
     participantCount,
+    agentJoined,
     connect,
     disconnect,
     toggleSession,

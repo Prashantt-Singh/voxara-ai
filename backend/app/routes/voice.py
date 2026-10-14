@@ -22,7 +22,10 @@ class TokenResponse(BaseModel):
 class VoiceStatusResponse(BaseModel):
     status: str
     livekit_configured: bool
+    gemini_configured: bool
     livekit_server_url: str | None
+    gemini_model: str
+    gemini_voice: str
     default_room: str
     details: str
 
@@ -30,15 +33,29 @@ class VoiceStatusResponse(BaseModel):
 @router.get("/status", response_model=VoiceStatusResponse)
 async def get_voice_status():
     """
-    Returns current voice infrastructure health and LiveKit configuration readiness.
+    Returns current voice infrastructure health, LiveKit readiness, and Gemini configuration status.
     """
-    is_valid, reason = settings.validate_livekit_credentials()
+    is_livekit_valid, lk_reason = settings.validate_livekit_credentials()
+    is_gemini_valid, gemini_reason = settings.validate_gemini_credentials()
+
+    all_ready = is_livekit_valid and is_gemini_valid
+
+    if not is_livekit_valid:
+        details = f"LiveKit configuration missing: {lk_reason}"
+    elif not is_gemini_valid:
+        details = f"Gemini configuration missing: {gemini_reason}"
+    else:
+        details = "LiveKit and Gemini Live credentials ready."
+
     return VoiceStatusResponse(
-        status="ready" if is_valid else "configuration_required",
-        livekit_configured=is_valid,
-        livekit_server_url=settings.livekit_url if is_valid else None,
+        status="ready" if all_ready else "configuration_required",
+        livekit_configured=is_livekit_valid,
+        gemini_configured=is_gemini_valid,
+        livekit_server_url=settings.livekit_url if is_livekit_valid else None,
+        gemini_model=settings.gemini_model,
+        gemini_voice=settings.gemini_voice,
         default_room=settings.livekit_default_room,
-        details="LiveKit credentials ready." if is_valid else f"Configuration missing: {reason}",
+        details=details,
     )
 
 

@@ -35,6 +35,23 @@ class Settings(BaseSettings):
         description="Default room name for voice interactions",
     )
 
+    # Gemini / Google AI credentials
+    google_api_key: str = Field(
+        default="",
+        validation_alias="GOOGLE_API_KEY",
+        description="Google Gemini API Key for Gemini Live realtime audio",
+    )
+    gemini_model: str = Field(
+        default="gemini-2.5-flash-native-audio-preview-12-2025",
+        validation_alias="GEMINI_MODEL",
+        description="Gemini Realtime Live API model ID",
+    )
+    gemini_voice: str = Field(
+        default="Puck",
+        validation_alias="GEMINI_VOICE",
+        description="Gemini voice persona (e.g. Puck, Aoede, Fenrir, Leda)",
+    )
+
     # Server settings
     host: str = Field(default="0.0.0.0", validation_alias="HOST")
     port: int = Field(default=8000, validation_alias="PORT")
@@ -60,6 +77,15 @@ class Settings(BaseSettings):
             return False, "LIVEKIT_API_KEY is not set or contains placeholder value."
         if not self.livekit_api_secret or "your_livekit" in self.livekit_api_secret:
             return False, "LIVEKIT_API_SECRET is not set or contains placeholder value."
+        return True, ""
+
+    def validate_gemini_credentials(self) -> tuple[bool, str]:
+        """
+        Validates whether Google Gemini API credentials are configured.
+        Returns (is_valid, error_reason).
+        """
+        if not self.google_api_key or "your_google" in self.google_api_key:
+            return False, "GOOGLE_API_KEY is not set or contains placeholder value."
         return True, ""
 
 

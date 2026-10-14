@@ -1,14 +1,16 @@
 """
-Voxara AI - LiveKit Voice Agent Worker Entrypoint (Step 2 Baseline)
+Voxara AI - LiveKit Voice Agent Worker Entrypoint (Step 3: Gemini Live API Integration)
 
-IMPORTANT NOTICE REGARDING STEP 2 SCOPE:
-In this phase (Step 2: Real-Time Voice Infrastructure), this module establishes
-the LiveKit Agent worker connection protocol and room event handlers.
+This module implements the full real-time conversational voice pipeline using Google's
+Gemini Live API via the official livekit-plugins-google RealtimeModel and livekit-agents.
 
-Conversational AI pipelines (ASR / Gemini Multimodal Live / TTS) are scheduled
-for subsequent phases (Step 3/4). This worker connects to the room, publishes
-participant state metadata, and logs WebRTC session activity without simulating
-or fabricating AI speech until a full LLM pipeline is configured.
+Pipeline Overview:
+1. Agent connects to the LiveKit WebRTC room.
+2. A human participant connects and speaks through their microphone.
+3. Audio streams directly via WebRTC into the AgentSession.
+4. Gemini Live processes bidirectional multimodal audio in real time.
+5. Synthesized audio responses are streamed back to the room and played to the user.
+6. Local assistant state and audio activity events are automatically synchronized.
 """
 
 import logging
@@ -16,59 +18,128 @@ from livekit.agents import (
     AutoSubscribe,
     JobContext,
     WorkerOptions,
+    AgentSession,
+    Agent,
     cli,
 )
+from livekit.plugins.google.realtime import RealtimeModel
 from app.config import settings
 
 logger = logging.getLogger("voxara-voice-agent")
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
+VOXARA_SYSTEM_PROMPT = """You are Voxara, a modern, intelligent, and empathetic real-time AI voice assistant.
+Your goal is to provide helpful, concise, and natural spoken answers.
+Guidelines for voice conversation:
+- Keep your answers natural, conversational, and relatively brief so the dialogue flows smoothly.
+- Avoid markdown tables, bullet points, asterisks, or formatting that sounds awkward when spoken aloud.
+- Speak warmly with clarity and enthusiasm.
+- If you don't know something or cannot perform an action, state it honestly and politely.
+"""
 
 
 async def entrypoint(ctx: JobContext):
     """
     Entrypoint executed when an agent job is dispatched for a room.
+    Integrates Gemini Live real-time audio pipeline into the room session.
     """
-    logger.info("Connecting to LiveKit room: %s (job_id: %s)", ctx.room.name, ctx.job.id)
+    logger.info("Initializing Voxara Voice Agent for room: %s (job_id: %s)", ctx.room.name, ctx.job.id)
 
-    # Connect to room with audio-only auto-subscription
+    # 1. Validate Gemini credentials
+    is_gemini_valid, gemini_reason = settings.validate_gemini_credentials()
+    if not is_gemini_valid:
+        logger.error(
+            "Cannot start voice conversation pipeline: %s. "
+            "Please ensure GOOGLE_API_KEY is set in backend/.env",
+            gemini_reason,
+        )
+        # Connect to room and inform user of missing configuration if possible
+        await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
+        return
+
+    # 2. Connect to the LiveKit room with audio subscription
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
+    logger.info("Agent connected to LiveKit room: %s", ctx.room.name)
 
-    # Wait for the first human participant to join
+    # 3. Wait for the participant to enter
     participant = await ctx.wait_for_participant()
-    logger.info("Participant joined room %s: %s (%s)", ctx.room.name, participant.identity, participant.name)
+    logger.info("Active human participant joined room: %s (%s)", participant.identity, participant.name)
 
-    # Listen to participant audio publication
-    @ctx.room.on("participant_connected")
-    def on_participant_connected(p):
-        logger.info("Participant connected: %s", p.identity)
+    # 4. Instantiate Google Gemini Live Realtime Model
+    try:
+        model = RealtimeModel(
+            model=settings.gemini_model,
+            api_key=settings.google_api_key,
+            voice=settings.gemini_voice,
+            instructions=VOXARA_SYSTEM_PROMPT,
+        )
+        logger.info(
+            "Gemini RealtimeModel initialized with model '%s' and voice '%s'.",
+            settings.gemini_model,
+            settings.gemini_voice,
+        )
+    except Exception as e:
+        logger.error("Failed to initialize Gemini RealtimeModel: %s", e, exc_info=True)
+        return
 
-    @ctx.room.on("participant_disconnected")
-    def on_participant_disconnected(p):
-        logger.info("Participant disconnected: %s", p.identity)
-
-    @ctx.room.on("track_subscribed")
-    def on_track_subscribed(track, publication, p):
-        logger.info("Subscribed to track %s (%s) from participant %s", track.sid, track.kind, p.identity)
-
-    logger.info(
-        "Agent is active in room %s. Ready for voice interaction pipeline integration (Step 3/4).",
-        ctx.room.name,
+    # 5. Create LiveKit Agent and AgentSession
+    agent = Agent(
+        instructions=VOXARA_SYSTEM_PROMPT,
     )
+
+    session = AgentSession(
+        llm=model,
+    )
+
+    # Log session and agent events for monitoring and troubleshooting
+    @session.on("agent_state_changed")
+    def on_agent_state_changed(event):
+        logger.info("Agent state transition: %s", getattr(event, "state", event))
+
+    @session.on("user_state_changed")
+    def on_user_state_changed(event):
+        logger.info("User speaking state: %s", getattr(event, "state", event))
+
+    @session.on("error")
+    def on_session_error(event):
+        logger.error("Session runtime error: %s", getattr(event, "error", event))
+
+    # 6. Start the voice agent session attached to the room
+    try:
+        logger.info("Starting AgentSession for room %s...", ctx.room.name)
+        await session.start(agent=agent, room=ctx.room)
+        logger.info("Voxara Voice Agent is live and listening in room %s!", ctx.room.name)
+
+        # Greet the user when conversation begins
+        session.say("Hello! I am Voxara. How can I help you today?")
+    except Exception as e:
+        logger.error("Error starting AgentSession: %s", e, exc_info=True)
 
 
 def run_agent():
     """
     CLI runner for starting the LiveKit Agent worker process.
-    Validates configuration before starting.
+    Validates LiveKit and Gemini configuration before starting.
     """
-    is_valid, reason = settings.validate_livekit_credentials()
-    if not is_valid:
+    is_lk_valid, lk_reason = settings.validate_livekit_credentials()
+    if not is_lk_valid:
         logger.error(
-            "Cannot start LiveKit Voice Agent: %s. "
+            "Cannot start LiveKit Voice Agent worker: %s. "
             "Please configure LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET in backend/.env",
-            reason,
+            lk_reason,
         )
         return
+
+    is_gemini_valid, gemini_reason = settings.validate_gemini_credentials()
+    if not is_gemini_valid:
+        logger.warning(
+            "Google Gemini credentials warning: %s. "
+            "Voice agent will connect to LiveKit but cannot stream Gemini speech until GOOGLE_API_KEY is configured in backend/.env",
+            gemini_reason,
+        )
 
     cli.run_app(
         WorkerOptions(

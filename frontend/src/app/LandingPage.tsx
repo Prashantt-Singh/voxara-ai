@@ -22,6 +22,7 @@ export const LandingPage: React.FC = () => {
     isMicrophoneEnabled,
     roomName,
     participantCount,
+    agentJoined,
     toggleSession,
     disconnect,
   } = useVoiceSession();
@@ -36,7 +37,7 @@ export const LandingPage: React.FC = () => {
   const handleMessageSubmit = (text: string) => {
     setLastSubmission(text);
     setTextNotice(
-      `Received text message: "${text}". (Step 2 Scope: Real-time LiveKit audio infrastructure established. Text-to-LLM conversation pipeline will be connected in Step 4).`
+      `Received text message: "${text}". (Voxara is tuned for voice interaction via Gemini Live. Click the mic button to converse!)`
     );
   };
 
@@ -75,7 +76,9 @@ export const LandingPage: React.FC = () => {
               {voiceStatus === 'connected' && (
                 <>
                   <Radio className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
-                  <span className="text-emerald-800 font-semibold">LiveKit Connected</span>
+                  <span className="text-emerald-800 font-semibold">
+                    {agentJoined ? 'Voxara AI Active (Gemini Live)' : 'LiveKit Connected (Waiting for Agent)'}
+                  </span>
                   {roomName && (
                     <span className="text-neutral-400 font-normal">| {roomName}</span>
                   )}
@@ -208,7 +211,7 @@ export const LandingPage: React.FC = () => {
         <Container className="flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2 text-xs text-neutral-400">
             <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-            <span>Step 2: Real-Time Voice Infrastructure (LiveKit WebRTC)</span>
+            <span>Step 3: Gemini Live Multimodal Voice AI Integration</span>
           </div>
 
           {/* Small development-only state selector for testing orb states */}

@@ -14,14 +14,24 @@ logger = logging.getLogger("voxara-api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    is_valid, reason = settings.validate_livekit_credentials()
-    if is_valid:
+    is_lk_valid, lk_reason = settings.validate_livekit_credentials()
+    if is_lk_valid:
         logger.info("LiveKit credentials configured successfully.")
     else:
         logger.warning(
             "LiveKit credentials not configured or incomplete: %s. "
             "Token generation endpoint will return 503 until configured.",
-            reason,
+            lk_reason,
+        )
+
+    is_gemini_valid, gemini_reason = settings.validate_gemini_credentials()
+    if is_gemini_valid:
+        logger.info("Google Gemini credentials configured successfully.")
+    else:
+        logger.warning(
+            "Google Gemini credentials not configured or incomplete: %s. "
+            "Gemini Live agent will require GOOGLE_API_KEY.",
+            gemini_reason,
         )
     yield
 
@@ -29,7 +39,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Voxara AI Backend",
     description="Real-time Agentic Voice AI Assistant Backend Infrastructure",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
@@ -49,9 +59,11 @@ app.include_router(voice.router)
 @app.get("/health")
 async def health_check():
     is_livekit_ok, _ = settings.validate_livekit_credentials()
+    is_gemini_ok, _ = settings.validate_gemini_credentials()
     return {
         "status": "healthy",
         "service": "voxara-ai-backend",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "livekit_configured": is_livekit_ok,
+        "gemini_configured": is_gemini_ok,
     }

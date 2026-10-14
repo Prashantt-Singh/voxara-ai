@@ -8,7 +8,10 @@ export interface VoiceTokenResponse {
 export interface VoiceStatusResponse {
   status: 'ready' | 'configuration_required' | string;
   livekit_configured: boolean;
+  gemini_configured: boolean;
   livekit_server_url: string | null;
+  gemini_model: string;
+  gemini_voice: string;
   default_room: string;
   details: string;
 }

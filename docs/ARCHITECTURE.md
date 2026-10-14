@@ -4,7 +4,7 @@ Voxara AI is a real-time Agentic Voice AI assistant designed for multimodal, res
 
 ---
 
-## High-Level Architecture (Current: Step 2)
+## High-Level Architecture (Current: Step 3 — Gemini Live Integration)
 
 ```mermaid
 flowchart TD
@@ -21,39 +21,64 @@ flowchart TD
         API["FastAPI Gateway (/health, /api/voice/status)"]
         TokenGen["TokenService (/api/voice/token)"]
         Config["Config & Secret Validation (.env)"]
-        LKAgent["LiveKit Voice Agent Worker (livekit-agents)"]
+        AgentWorker["LiveKit Agent Worker (backend/app/agent.py)"]
+        AgentSession["LiveKit AgentSession"]
     end
 
-    subgraph Cloud["LiveKit WebRTC Infrastructure"]
-        LKCloud["LiveKit Cloud / WebRTC SFU Server"]
+    subgraph LiveKitCloud["LiveKit Cloud Infrastructure"]
+        SFU["LiveKit WebRTC SFU Server"]
     end
 
-    subgraph Future["Future AI Pipelines (Step 4+)"]
-        Gemini["Multimodal LLM (Gemini Live)"]
-        LangGraph["Agentic Orchestration (LangGraph)"]
-        MCP["MCP Tools Engine"]
+    subgraph GoogleAI["Google Gemini Cloud"]
+        GeminiLive["Gemini Live Multimodal API (RealtimeModel)"]
     end
 
-    %% Frontend Interactions
+    subgraph FuturePipelines["Future Orchestration (Step 4 & 5)"]
+        LangGraph["LangGraph Workflow Machine"]
+        MCP["Model Context Protocol (MCP) Tools"]
+    end
+
+    %% Client connection flow
     UI --> Orb
     UI --> MicBtn
-    MicBtn -->|Toggle Voice| Hook
-    Hook -->|Request Token| VoiceService
-    VoiceService -->|POST /api/voice/token| TokenGen
+    MicBtn -->|1. Toggle Voice| Hook
+    Hook -->|2. Request Token| VoiceService
+    VoiceService -->|3. POST /api/voice/token| TokenGen
     TokenGen --> Config
-    Hook -->|Connect WebRTC Session| LKClient
-    LKClient <==>|Bidirectional Audio Streaming| LKCloud
-    LKAgent <==>|Room Worker Participation| LKCloud
+    Hook -->|4. Join WebRTC Room| LKClient
+    LKClient <==>|5. Bi-directional WebRTC Audio| SFU
 
-    %% State Synchronization
-    LKClient -.->|isSpeaking / ActiveSpeakers| Hook
+    %% Agent and Gemini Live flow
+    AgentWorker -->|Connect as Worker| SFU
+    SFU <==>|Subscribe to User Audio & Publish Agent Audio| AgentSession
+    AgentSession <==>|Real-time Full-Duplex Audio & Speech Events| GeminiLive
+
+    %% Visual State Loop
+    LKClient -.->|RoomEvent.ActiveSpeakersChanged| Hook
     Hook -.->|idle / listening / speaking / error| Orb
 
     %% Future Connections
-    LKAgent -.->|Planned Step 4| Gemini
-    LKAgent -.->|Planned Step 5| LangGraph
-    LKAgent -.->|Planned Step 6| MCP
+    AgentWorker -.->|Step 4: Planned Orchestration| LangGraph
+    AgentWorker -.->|Step 5: Planned Tools| MCP
 ```
+
+---
+
+## Data Flow: Voice Conversation Pipeline
+
+1. **User Speaks**:
+   - The user clicks the microphone button and speaks into their device.
+   - The browser's WebRTC audio track is published to the LiveKit room.
+2. **Audio Transport**:
+   - LiveKit WebRTC SFU routes the raw audio packets to the connected Python `AgentSession` worker process.
+3. **Gemini Live Multimodal Processing**:
+   - `livekit-plugins-google` streams the audio packets to Google's Gemini Live API via WebSocket using the configured model (`gemini-2.5-flash-native-audio-preview-12-2025` or `gemini-2.0-flash-exp`).
+   - Gemini Live detects speech boundaries, transcribes intent, and generates native spoken audio.
+4. **Agent Response**:
+   - The incoming audio stream from Gemini Live is packaged into audio frames and published to the LiveKit room.
+5. **Playback & Visual State**:
+   - The browser client receives the agent's audio track and plays it through HTMLAudioElement.
+   - `RoomEvent.ActiveSpeakersChanged` flags the agent participant as active speaker, transitioning `AssistantOrb` into the resonant `speaking` wave. When the user speaks, it shifts to `listening`.
 
 ---
 
@@ -73,18 +98,18 @@ voxara-ai/
 │   │   │   ├── __init__.py
 │   │   │   └── token_service.py # LiveKit JWT AccessToken generation
 │   │   ├── __init__.py
-│   │   ├── agent.py             # LiveKit Voice Agent worker entrypoint
+│   │   ├── agent.py             # LiveKit Voice Agent worker with Gemini Live RealtimeModel
 │   │   ├── config.py            # Pydantic Settings & environment variable validation
 │   │   └── main.py              # FastAPI app setup, CORS, lifespan, and /health
 │   ├── .env.example             # Template for required environment variables
-│   ├── requirements.txt         # FastAPI, LiveKit SDK & Agent dependencies
+│   ├── requirements.txt         # FastAPI, LiveKit SDK, Agent & Google plugin dependencies
 │   ├── venv/                    # Python virtual environment
 │   └── README.md                # Backend service documentation
 ├── frontend/
 │   ├── public/                  # Static assets
 │   ├── src/
 │   │   ├── app/
-│   │   │   └── LandingPage.tsx  # Main application view with voice controls
+│   │   │   └── LandingPage.tsx  # Main application view with voice controls & live state
 │   │   ├── components/
 │   │   │   ├── assistant/
 │   │   │   │   ├── AssistantOrb.tsx   # Animated visual state orb
@@ -95,7 +120,7 @@ voxara-ai/
 │   │   │       └── Container.tsx      # Responsive container
 │   │   ├── hooks/
 │   │   │   ├── useAssistantState.ts   # State management hook
-│   │   │   └── useVoiceSession.ts     # LiveKit WebRTC session hook
+│   │   │   └── useVoiceSession.ts     # LiveKit WebRTC session hook (with agentJoined tracking)
 │   │   ├── lib/
 │   │   │   └── voiceService.ts        # API client for backend voice endpoints
 │   │   ├── types/
@@ -120,15 +145,15 @@ voxara-ai/
 | `idle` | Connected room with no active speakers, or standby. | Ambient warm golden breathing pulse. |
 | `connecting` | Fetching token and negotiating WebRTC peer connection. | Radiant swirling transition. |
 | `listening` | WebRTC participant's local audio track is unmuted and active. | Expanded radiant yellow wave. |
-| `speaking` | Remote assistant participant is actively transmitting audio. | Vocal resonance modulation. |
-| `thinking` | LLM reasoning / processing (future phase). | Swirling gradient rotation. |
+| `speaking` | Remote Voxara agent is actively transmitting Gemini voice. | Vocal resonance modulation. |
+| `thinking` | Initializing session / negotiating connection. | Swirling gradient rotation. |
 | `executing` | Agentic workflow / tool execution (future phase). | Rhythmic operational oscillation. |
-| `error` | Microphone permission denied or LiveKit configuration error. | Soft coral/crimson indicator with diagnostic alert. |
+| `error` | Microphone permission denied, LiveKit, or Gemini error. | Soft coral/crimson indicator with diagnostic alert. |
 
 ---
 
 ## Security Model
 
-1. **Zero Secret Exposure**: LiveKit API secret (`LIVEKIT_API_SECRET`) resides solely on the backend inside environment variables and is never transmitted or exposed to the client.
-2. **Short-Lived Access Tokens**: The backend issues signed JWT tokens with 15-minute time-to-live (`TTL`) granting restricted room access (`can_publish`, `can_subscribe`, `can_publish_data`).
-3. **No Unauthenticated Secret Access**: Credentials and sensitive room parameters are strictly managed via Pydantic settings.
+1. **Zero Secret Exposure**: Neither `LIVEKIT_API_SECRET` nor `GOOGLE_API_KEY` are ever passed to the frontend browser client.
+2. **Short-Lived Access Tokens**: The backend issues signed JWT tokens with 15-minute time-to-live (`TTL`) granting restricted room access.
+3. **Protected Environment**: All credentials remain in `backend/.env` which is strictly ignored by Git.

@@ -38,6 +38,7 @@ export interface UseVoiceSessionReturn {
   isMicrophoneEnabled: boolean;
   roomName: string | null;
   participantCount: number;
+  agentJoined: boolean;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   toggleSession: () => Promise<void>;
