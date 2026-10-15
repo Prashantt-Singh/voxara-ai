@@ -6,21 +6,29 @@ Python backend infrastructure for Voxara AI, providing secure LiveKit token issu
 
 ## Directory Structure
 
-```
 backend/
 ├── app/
 │   ├── routes/
 │   │   ├── __init__.py
-│   │   └── voice.py         # /api/voice/status and /api/voice/token endpoints
+│   │   ├── voice.py         # /api/voice/status and /api/voice/token endpoints
+│   │   └── workflows.py     # /api/workflows/demo and /api/workflows/status endpoints
 │   ├── services/
 │   │   ├── __init__.py
 │   │   └── token_service.py # LiveKit JWT AccessToken generator with strict permissions
+│   ├── workflows/
+│   │   ├── __init__.py
+│   │   ├── state.py         # TypedDict schemas, events & Pydantic models
+│   │   ├── nodes.py         # receive_request, validate_request, produce_result nodes
+│   │   └── graph.py         # LangGraph StateGraph definition and async runner
 │   ├── __init__.py
 │   ├── agent.py             # LiveKit Voice Agent worker entrypoint with Gemini Live
 │   ├── config.py            # Pydantic Settings & environment variable validation
 │   └── main.py              # FastAPI app setup, CORS, lifespan, and /health
+├── tests/
+│   ├── __init__.py
+│   └── test_workflows.py    # Pytest suite for LangGraph orchestration & endpoints
 ├── .env.example             # Template for required environment variables
-├── requirements.txt         # FastAPI, LiveKit SDK, Agent & Google plugin dependencies
+├── requirements.txt         # FastAPI, LiveKit SDK, LangGraph & Pytest dependencies
 └── venv/                    # Python virtual environment
 ```
 
@@ -81,11 +89,27 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The server will start at `http://localhost:8000`. You can test health at:
+The server will start at `http://localhost:8000`. You can test endpoints at:
 - `GET http://localhost:8000/health`
 - `GET http://localhost:8000/api/voice/status`
+- `GET http://localhost:8000/api/workflows/status`
+- `POST http://localhost:8000/api/workflows/demo`
 
-### 4. Run the LiveKit Voice Agent Worker (Gemini Live)
+### 4. Run the Pytest Test Suite
+
+Execute the automated test suite covering LangGraph workflows, sequential node execution, event tracking, and API endpoints:
+
+```bash
+# Windows
+.\venv\Scripts\activate
+pytest tests/
+
+# macOS/Linux
+source venv/bin/activate
+pytest tests/
+```
+
+### 5. Run the LiveKit Voice Agent Worker (Gemini Live)
 
 In a separate terminal with the virtual environment activated, run:
 
@@ -97,6 +121,79 @@ python -m app.agent dev
 # macOS/Linux
 source venv/bin/activate
 python -m app.agent dev
+```
+
+---
+
+## Agentic Workflow Foundation (Step 4A: LangGraph)
+
+LangGraph provides the orchestration layer for multi-step agentic workflows without interfering with the LiveKit voice loop.
+
+### StateGraph Sequence
+
+```mermaid
+flowchart LR
+    Start([START]) --> Receive[receive_request]
+    Receive --> Validate[validate_request]
+    Validate --> Produce[produce_result]
+    Produce --> EndNode([END])
+```
+
+### Example Request (`POST /api/workflows/demo`)
+
+```json
+{
+  "task": "Analyze telemetry anomalies",
+  "input_data": {
+    "metric": "cpu_load",
+    "threshold": 85
+  }
+}
+```
+
+### Example Response
+
+```json
+{
+  "execution_id": "wf_b89a1c2d3e4f",
+  "task": "Analyze telemetry anomalies",
+  "status": "completed",
+  "result": {
+    "execution_id": "wf_b89a1c2d3e4f",
+    "task": "Analyze telemetry anomalies",
+    "summary": "Completed workflow demonstration for task: 'Analyze telemetry anomalies'",
+    "received_input": {
+      "metric": "cpu_load",
+      "threshold": 85
+    },
+    "execution_steps": ["receive_request", "validate_request", "produce_result"],
+    "step_count": 3,
+    "completed_at": "2026-10-14T05:45:00.000000Z"
+  },
+  "error": null,
+  "events": [
+    {
+      "event_id": "evt_01",
+      "execution_id": "wf_b89a1c2d3e4f",
+      "node_name": "receive_request",
+      "event_type": "node_start",
+      "timestamp": "2026-10-14T05:45:00.000100Z",
+      "status": "started",
+      "duration": null,
+      "duration_ms": null
+    },
+    {
+      "event_id": "evt_02",
+      "execution_id": "wf_b89a1c2d3e4f",
+      "node_name": "receive_request",
+      "event_type": "node_finish",
+      "timestamp": "2026-10-14T05:45:00.000250Z",
+      "status": "completed",
+      "duration": 0.000150,
+      "duration_ms": 0.150
+    }
+  ]
+}
 ```
 
 ---
@@ -125,7 +222,9 @@ sequenceDiagram
 
 ---
 
-## Current Status (Step 3: Gemini Live Integration)
+## Current Status (Step 4A: Agentic Workflow Foundation)
 
-- **Implemented**: Full Gemini Live multimodal real-time voice pipeline using `livekit-plugins-google==1.8.6`, `RealtimeModel` with native audio streaming, `AgentSession` event handling, system instructions, and state indicators.
-- **Next Phase (Step 4/5)**: LangGraph agentic workflow execution and MCP tool execution engine.
+- **Step 3 (Completed)**: Full Gemini Live multimodal real-time voice pipeline using `livekit-plugins-google==1.8.6`, `RealtimeModel` with native audio streaming, `AgentSession` event handling, and visual orb feedback.
+- **Step 4A (Completed)**: LangGraph StateGraph orchestration layer, typed execution state with `operator.add` event reducer, discrete nodes (`receive_request`, `validate_request`, `produce_result`), execution lifecycle events with true durations, and `POST /api/workflows/demo`.
+- **Step 4B (Upcoming)**: Voice agent workflow invocation.
+- **Step 5 (Upcoming)**: Model Context Protocol (MCP) tool execution engine.
