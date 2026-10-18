@@ -56,6 +56,7 @@ def receive_request(state: WorkflowState) -> Dict[str, Any]:
         return {
             "task": task,
             "input_data": input_data,
+            "intermediate_results": {},
             "status": "running",
             "events": [start_event, finish_event],
         }
@@ -214,6 +215,18 @@ def produce_result(state: WorkflowState) -> Dict[str, Any]:
                 "events": [start_event, error_event],
             }
 
+        # Controlled operation execution -> generates structured intermediate results
+        operation_metrics = {
+            "task_characters": len(task),
+            "input_parameters_count": len(input_data),
+            "processed_keys": sorted(list(input_data.keys())),
+            "executed_operation": "controlled_task_processing",
+        }
+        intermediate = {
+            "operation_metrics": operation_metrics,
+            "validation_status": "passed",
+        }
+
         # Produce real demonstration result
         result_payload = {
             "execution_id": execution_id,
@@ -237,6 +250,7 @@ def produce_result(state: WorkflowState) -> Dict[str, Any]:
 
         return {
             "status": "completed",
+            "intermediate_results": intermediate,
             "result": result_payload,
             "events": [start_event, finish_event],
         }

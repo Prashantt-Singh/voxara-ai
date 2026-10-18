@@ -41,6 +41,8 @@ async def test_valid_demonstration_workflow_direct():
     assert state["task"] == task
     assert state["status"] == "completed"
     assert state["error"] is None
+    assert "intermediate_results" in state
+    assert state["intermediate_results"]["validation_status"] == "passed"
     assert state["result"] is not None
     assert state["result"]["task"] == task
     assert state["result"]["received_input"] == input_data
@@ -65,6 +67,8 @@ def test_valid_demonstration_workflow_api(client):
     assert data["task"] == payload["task"]
     assert data["status"] == "completed"
     assert data["error"] is None
+    assert "intermediate_results" in data
+    assert data["intermediate_results"]["validation_status"] == "passed"
     assert data["result"] is not None
     assert data["result"]["summary"].startswith("Completed workflow demonstration")
     assert len(data["events"]) == 6
@@ -210,6 +214,7 @@ def test_workflow_endpoint_response_structure(client):
     assert "execution_id" in data and isinstance(data["execution_id"], str)
     assert "task" in data and data["task"] == "Inspect payload structure"
     assert "status" in data and data["status"] == "completed"
+    assert "intermediate_results" in data and isinstance(data["intermediate_results"], dict)
     assert "result" in data and isinstance(data["result"], dict)
     assert "error" in data and data["error"] is None
     assert "events" in data and isinstance(data["events"], list)

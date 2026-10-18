@@ -1,25 +1,29 @@
 """
-Voxara AI - Workflows API Router (Step 4A: Agentic Workflow Foundation)
+Voxara AI - Workflows API Router (Step 4A & 4B: Agentic Workflows & Skill Analysis)
 
 This module defines FastAPI endpoints for orchestrating LangGraph workflows.
 Provides:
-  - POST /api/workflows/demo: Runs the demonstration workflow graph asynchronously.
   - GET /api/workflows/status: Returns orchestration engine health and metadata.
+  - POST /api/workflows/demo: Runs the demonstration workflow graph asynchronously.
+  - POST /api/workflows/skill-analysis: Runs the Gemini-powered skill analysis workflow.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from app.workflows.state import (
     WorkflowDemoRequest,
     WorkflowDemoResponse,
+    SkillAnalysisRequest,
+    SkillAnalysisResponse,
     ExecutionEventModel,
 )
 from app.workflows.graph import run_workflow
+from app.workflows.skill_graph import run_skill_analysis_workflow
 
 logger = logging.getLogger("voxara-api")
 
@@ -30,18 +34,38 @@ class WorkflowEngineStatusResponse(BaseModel):
     status: str = Field(description="Workflow orchestration engine readiness status")
     engine: str = Field(description="Underlying graph orchestration framework")
     graph_nodes: list[str] = Field(description="Registered graph nodes in demonstration pipeline")
+    skill_analysis_nodes: list[str] = Field(
+        default_factory=lambda: [
+            "validate_input",
+            "compare_skills",
+            "analyze_skill_gaps",
+            "validate_analysis",
+        ],
+        description="Registered graph nodes in the skill analysis pipeline",
+    )
+    available_workflows: list[str] = Field(
+        default_factory=lambda: ["demo", "skill-analysis"],
+        description="List of available executable workflows",
+    )
     details: str = Field(description="Operational status description")
 
 
 @router.get("/status", response_model=WorkflowEngineStatusResponse)
 async def get_workflow_status():
     """
-    Returns workflow engine readiness and registered demonstration graph metadata.
+    Returns workflow engine readiness and registered graph metadata.
     """
     return WorkflowEngineStatusResponse(
         status="ready",
         engine="LangGraph StateGraph",
         graph_nodes=["receive_request", "validate_request", "produce_result"],
+        skill_analysis_nodes=[
+            "validate_input",
+            "compare_skills",
+            "analyze_skill_gaps",
+            "validate_analysis",
+        ],
+        available_workflows=["demo", "skill-analysis"],
         details="LangGraph agentic workflow orchestration engine initialized and ready.",
     )
 
@@ -70,7 +94,6 @@ async def run_demo_workflow_endpoint(req: WorkflowDemoRequest):
         input_data=req.input_data,
     )
 
-    # Convert event dicts to validated Pydantic models
     event_models = [
         ExecutionEventModel(
             event_id=evt["event_id"],
@@ -90,7 +113,69 @@ async def run_demo_workflow_endpoint(req: WorkflowDemoRequest):
         execution_id=final_state["execution_id"],
         task=final_state.get("task", req.task),
         status=final_state.get("status", "completed"),
+        intermediate_results=final_state.get("intermediate_results"),
         result=final_state.get("result"),
         error=final_state.get("error"),
         events=event_models,
+    )
+
+
+@router.post("/skill-analysis", response_model=SkillAnalysisResponse)
+async def run_skill_analysis_endpoint(req: SkillAnalysisRequest):
+    """
+    Executes the Gemini-powered skill gap analysis workflow asynchronously.
+
+    Accepts:
+      - existing_skills: List of skills the candidate currently possesses.
+      - required_skills: List of skills required for the internship or role.
+      - optional_context: Optional context regarding the role or user goals.
+
+    Returns:
+      - execution_id: Unique execution identifier.
+      - status: Final execution status (completed, failed).
+      - matched_skills: Skills present in both sets.
+      - missing_skills: Required skills missing from candidate's profile.
+      - prioritized_missing_skills: Ranked list of missing skills by urgency.
+      - analysis: Semantic gap analysis and contextual explanation.
+      - recommended_next_steps: Concrete, actionable learning tasks.
+      - events: Real start and finish/error execution events with true durations.
+      - error: Error description if workflow or validation failed.
+    """
+    logger.info(
+        "Starting skill analysis workflow: %d existing vs %d required skills",
+        len(req.existing_skills),
+        len(req.required_skills),
+    )
+
+    final_state = await run_skill_analysis_workflow(
+        existing_skills=req.existing_skills,
+        required_skills=req.required_skills,
+        optional_context=req.optional_context,
+    )
+
+    event_models = [
+        ExecutionEventModel(
+            event_id=evt["event_id"],
+            execution_id=evt["execution_id"],
+            node_name=evt["node_name"],
+            event_type=evt["event_type"],
+            timestamp=evt["timestamp"],
+            status=evt["status"],
+            duration=evt.get("duration"),
+            duration_ms=evt.get("duration_ms"),
+            details=evt.get("details"),
+        )
+        for evt in final_state.get("events", [])
+    ]
+
+    return SkillAnalysisResponse(
+        execution_id=final_state["execution_id"],
+        status=final_state.get("status", "completed"),
+        matched_skills=final_state.get("matched_skills", []),
+        missing_skills=final_state.get("missing_skills", []),
+        prioritized_missing_skills=final_state.get("prioritized_missing_skills", []),
+        analysis=final_state.get("analysis", ""),
+        recommended_next_steps=final_state.get("recommended_next_steps", []),
+        events=event_models,
+        error=final_state.get("error"),
     )

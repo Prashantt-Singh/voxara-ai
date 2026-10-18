@@ -51,6 +51,11 @@ class Settings(BaseSettings):
         validation_alias="GEMINI_VOICE",
         description="Gemini voice persona (e.g. Puck, Aoede, Fenrir, Leda)",
     )
+    gemini_text_model: str = Field(
+        default="gemini-3.7-flash",
+        validation_alias="GEMINI_TEXT_MODEL",
+        description="Google Gemini model ID for text generation and skill gap analysis",
+    )
 
     # Server settings
     host: str = Field(default="0.0.0.0", validation_alias="HOST")

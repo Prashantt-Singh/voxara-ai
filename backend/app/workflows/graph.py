@@ -82,6 +82,7 @@ async def run_workflow(
         "input_data": inputs,
         "status": "pending",
         "events": [],
+        "intermediate_results": {},
         "result": None,
         "error": None,
     }
@@ -104,6 +105,7 @@ async def run_workflow(
             "input_data": inputs,
             "status": "failed",
             "events": [fallback_event],
+            "intermediate_results": {},
             "result": None,
             "error": f"Unhandled workflow execution failure: {str(exc)}",
         }

@@ -11,24 +11,28 @@ backend/
 │   ├── routes/
 │   │   ├── __init__.py
 │   │   ├── voice.py         # /api/voice/status and /api/voice/token endpoints
-│   │   └── workflows.py     # /api/workflows/demo and /api/workflows/status endpoints
+│   │   └── workflows.py     # /api/workflows/status, /demo, and /skill-analysis endpoints
 │   ├── services/
 │   │   ├── __init__.py
-│   │   └── token_service.py # LiveKit JWT AccessToken generator with strict permissions
+│   │   ├── token_service.py # LiveKit JWT AccessToken generator with strict permissions
+│   │   └── gemini_service.py# Isolated Gemini text generation & skill gap analysis
 │   ├── workflows/
 │   │   ├── __init__.py
-│   │   ├── state.py         # TypedDict schemas, events & Pydantic models
-│   │   ├── nodes.py         # receive_request, validate_request, produce_result nodes
-│   │   └── graph.py         # LangGraph StateGraph definition and async runner
+│   │   ├── state.py         # State schemas, events & Pydantic models (Step 4A & 4B)
+│   │   ├── nodes.py         # Step 4A demo workflow nodes
+│   │   ├── graph.py         # Step 4A demo workflow graph definition
+│   │   ├── skill_nodes.py   # Step 4B validate_input, compare_skills, analyze_skill_gaps, validate_analysis
+│   │   └── skill_graph.py   # Step 4B Skill Analysis StateGraph and async runner
 │   ├── __init__.py
 │   ├── agent.py             # LiveKit Voice Agent worker entrypoint with Gemini Live
 │   ├── config.py            # Pydantic Settings & environment variable validation
 │   └── main.py              # FastAPI app setup, CORS, lifespan, and /health
 ├── tests/
 │   ├── __init__.py
-│   └── test_workflows.py    # Pytest suite for LangGraph orchestration & endpoints
+│   ├── test_workflows.py    # Pytest suite for Step 4A demo workflow & endpoints
+│   └── test_skill_analysis.py # Pytest suite for Step 4B skill analysis workflow
 ├── .env.example             # Template for required environment variables
-├── requirements.txt         # FastAPI, LiveKit SDK, LangGraph & Pytest dependencies
+├── requirements.txt         # FastAPI, LiveKit SDK, google-genai, LangGraph & Pytest
 └── venv/                    # Python virtual environment
 ```
 
@@ -222,9 +226,82 @@ sequenceDiagram
 
 ---
 
-## Current Status (Step 4A: Agentic Workflow Foundation)
+---
+
+## Skill Analysis Workflow (Step 4B: Gemini-Powered Skill Analysis)
+
+A specialized LangGraph pipeline that compares candidate skills against internship requirements, validates data at every step, computes deterministic matches and missing skills via Python set logic, and uses Google Gemini for contextual reasoning, prioritization, and next-step recommendations.
+
+### StateGraph Sequence
+
+```mermaid
+flowchart LR
+    Start([START]) --> ValidateIn[validate_input]
+    ValidateIn --> Compare[compare_skills]
+    Compare --> Analyze[analyze_skill_gaps]
+    Analyze --> ValidateOut[validate_analysis]
+    ValidateOut --> EndNode([END])
+```
+
+### Example Request (`POST /api/workflows/skill-analysis`)
+
+```json
+{
+  "existing_skills": ["Python", "FastAPI", "Git"],
+  "required_skills": ["Python", "FastAPI", "PyTorch", "Docker"],
+  "optional_context": "AI Engineering Internship"
+}
+```
+
+### Example Response
+
+```json
+{
+  "execution_id": "wf_6a3c8a3c1084",
+  "status": "completed",
+  "matched_skills": ["Python", "FastAPI"],
+  "missing_skills": ["PyTorch", "Docker"],
+  "prioritized_missing_skills": ["PyTorch", "Docker"],
+  "analysis": "For an AI Engineering Internship, PyTorch is prioritized as the most critical missing skill because it directly provides the foundation for building and fine-tuning models. Docker is the second priority, serving as an essential deployment and containerization tool...",
+  "recommended_next_steps": [
+    "Study the core concepts of PyTorch, focusing on tensors, dataset loaders, autograd, and training simple models.",
+    "Develop a practical project using PyTorch to run inference and integrate it with a FastAPI service.",
+    "Learn the fundamentals of Docker, including creating Dockerfiles and managing dependencies.",
+    "Containerize the combined FastAPI and PyTorch application using Docker."
+  ],
+  "events": [
+    {
+      "event_id": "evt_e605758e9f9a",
+      "execution_id": "wf_6a3c8a3c1084",
+      "node_name": "validate_input",
+      "event_type": "node_start",
+      "timestamp": "2026-10-15T05:24:48.216289+00:00",
+      "status": "started",
+      "duration": null,
+      "duration_ms": null
+    },
+    {
+      "event_id": "evt_02cb5145dc84",
+      "execution_id": "wf_6a3c8a3c1084",
+      "node_name": "validate_input",
+      "event_type": "node_finish",
+      "timestamp": "2026-10-15T05:24:48.216289+00:00",
+      "status": "completed",
+      "duration": 0.000061,
+      "duration_ms": 0.061
+    }
+  ],
+  "error": null
+}
+```
+
+---
+
+## Current Status (Step 4B: Gemini-Powered Skill Analysis Workflow)
 
 - **Step 3 (Completed)**: Full Gemini Live multimodal real-time voice pipeline using `livekit-plugins-google==1.8.6`, `RealtimeModel` with native audio streaming, `AgentSession` event handling, and visual orb feedback.
 - **Step 4A (Completed)**: LangGraph StateGraph orchestration layer, typed execution state with `operator.add` event reducer, discrete nodes (`receive_request`, `validate_request`, `produce_result`), execution lifecycle events with true durations, and `POST /api/workflows/demo`.
-- **Step 4B (Upcoming)**: Voice agent workflow invocation.
+- **Step 4B (Completed)**: LangGraph Skill Analysis workflow (`validate_input` -> `compare_skills` -> `analyze_skill_gaps` -> `validate_analysis`), isolated Google GenAI text service (`app.services.gemini_service`), deterministic Python set math, structured Pydantic schemas, and `POST /api/workflows/skill-analysis`.
+- **Step 4C (Upcoming)**: Voice agent workflow invocation.
 - **Step 5 (Upcoming)**: Model Context Protocol (MCP) tool execution engine.
+

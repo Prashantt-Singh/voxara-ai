@@ -79,7 +79,7 @@ def create_execution_event(
 
 class WorkflowState(TypedDict):
     """
-    Typed state representation passed across LangGraph nodes.
+    Typed state representation passed across LangGraph nodes in a general-purpose workflow.
     Each execution receives an isolated dictionary instance to prevent shared state.
     Events list uses operator.add reducer to append node lifecycle events.
     """
@@ -88,6 +88,7 @@ class WorkflowState(TypedDict):
     input_data: Dict[str, Any]
     status: Literal["pending", "running", "completed", "failed"]
     events: Annotated[List[ExecutionEvent], operator.add]
+    intermediate_results: Dict[str, Any]
     result: Optional[Dict[str, Any]]
     error: Optional[str]
 
@@ -136,9 +137,109 @@ class WorkflowDemoResponse(BaseModel):
     execution_id: str = Field(description="Unique identifier for this workflow execution")
     task: str = Field(description="Task description")
     status: str = Field(description="Final workflow status: completed, failed, or pending")
+    intermediate_results: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Intermediate outcomes generated across workflow stages before finalization",
+    )
     result: Optional[Dict[str, Any]] = Field(default=None, description="Final workflow execution result payload")
     error: Optional[str] = Field(default=None, description="Error message if workflow execution failed")
     events: List[ExecutionEventModel] = Field(
         default_factory=list,
         description="Chronological log of real node start and finish execution events",
     )
+
+
+# ---------------------------------------------------------------------------
+# Step 4B: Skill Analysis Workflow State & Schemas
+# ---------------------------------------------------------------------------
+
+class SkillAnalysisState(TypedDict):
+    """
+    Typed state representation passed across LangGraph nodes in the Skill Analysis workflow.
+    Each execution receives an isolated dictionary instance to prevent shared state.
+    Events list uses operator.add reducer to append node lifecycle events.
+    """
+    execution_id: str
+    existing_skills: List[str]
+    required_skills: List[str]
+    optional_context: Optional[str]
+    status: Literal["pending", "running", "completed", "failed"]
+    events: Annotated[List[ExecutionEvent], operator.add]
+    matched_skills: List[str]
+    missing_skills: List[str]
+    prioritized_missing_skills: List[str]
+    analysis: str
+    recommended_next_steps: List[str]
+    raw_analysis: Optional[Dict[str, Any]]
+    error: Optional[str]
+
+
+class SkillAnalysisRequest(BaseModel):
+    """Request payload for the Gemini-powered skill gap analysis workflow."""
+    existing_skills: List[str] = Field(
+        ...,
+        description="List of skills currently possessed by the candidate",
+        examples=[["Python", "FastAPI", "Git"]],
+    )
+    required_skills: List[str] = Field(
+        ...,
+        description="List of skills required for the internship or role",
+        examples=[["Python", "Docker", "PyTorch", "FastAPI"]],
+    )
+    optional_context: Optional[str] = Field(
+        default=None,
+        description="Optional context describing the internship or candidate's goals",
+        examples=["Applying for an AI Engineering internship focusing on backend model deployment."],
+    )
+
+    @field_validator("existing_skills", "required_skills")
+    @classmethod
+    def validate_skills_list(cls, v: List[str], info) -> List[str]:
+        field_name = info.field_name
+        if not isinstance(v, list) or len(v) == 0:
+            raise ValueError(f"'{field_name}' must be a non-empty list of skill names.")
+        cleaned: List[str] = []
+        for item in v:
+            if not isinstance(item, str):
+                raise ValueError(f"All items in '{field_name}' must be strings.")
+            trimmed = item.strip()
+            if trimmed:
+                cleaned.append(trimmed)
+        if not cleaned:
+            raise ValueError(f"'{field_name}' cannot consist solely of empty or whitespace strings.")
+        return cleaned
+
+
+class SkillAnalysisResponse(BaseModel):
+    """Response payload returned by the skill analysis workflow endpoint."""
+    execution_id: str = Field(description="Unique identifier for this workflow execution")
+    status: str = Field(description="Final execution status: completed, failed, or pending")
+    matched_skills: List[str] = Field(
+        default_factory=list,
+        description="Skills present in both candidate skills and role requirements",
+    )
+    missing_skills: List[str] = Field(
+        default_factory=list,
+        description="Required skills not currently possessed by the candidate",
+    )
+    prioritized_missing_skills: List[str] = Field(
+        default_factory=list,
+        description="Missing skills ranked by learning priority for the specified role",
+    )
+    analysis: str = Field(
+        default="",
+        description="Contextual reasoning explaining skill gaps and relevance to the role",
+    )
+    recommended_next_steps: List[str] = Field(
+        default_factory=list,
+        description="Concrete, actionable recommendations for closing the identified skill gaps",
+    )
+    events: List[ExecutionEventModel] = Field(
+        default_factory=list,
+        description="Chronological log of real node start, finish, and error execution events",
+    )
+    error: Optional[str] = Field(
+        default=None,
+        description="Error message if workflow execution or validation failed",
+    )
+

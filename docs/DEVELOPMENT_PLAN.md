@@ -12,9 +12,30 @@ This document outlines the phased roadmap for building Voxara AI into a producti
 | **Step 2** | **Real-Time Voice Infrastructure (LiveKit WebRTC)** | **Completed** | Integrate LiveKit WebRTC client, `useVoiceSession` hook, `voiceService`, FastAPI token generator, configuration validation, LiveKit agent entry point, and microphone controls. |
 | **Step 3** | **Gemini Live Multimodal Voice AI Integration** | **Completed** | Official LiveKit Google plugin integration (`livekit-plugins-google`), Gemini Live bidirectional voice model (`RealtimeModel`), `AgentSession` loop, spoken greeting and conversation. |
 | **Step 4A** | **Agentic Workflow Foundation (LangGraph)** | **Completed** | Introduce LangGraph StateGraph orchestration layer, typed execution state, sequential nodes (`receive_request` -> `validate_request` -> `produce_result`), execution lifecycle events with true durations, and POST `/api/workflows/demo`. |
-| **Step 4B** | **Voice Agent & LangGraph Integration** | Upcoming | Invoke LangGraph workflows from LiveKit voice agent without persistent competing loops. |
+| **Step 4B** | **Gemini-Powered Skill Analysis Workflow** | **Completed** | Implement dedicated LangGraph workflow (`validate_input` -> `compare_skills` -> `analyze_skill_gaps` -> `validate_analysis`), deterministic Python set math, isolated Google GenAI text service, structured Pydantic schemas, and `POST /api/workflows/skill-analysis`. |
+| **Step 4C** | **Voice Agent & LangGraph Integration** | Upcoming | Invoke LangGraph workflows from LiveKit voice agent without persistent competing loops. |
 | **Step 5** | **Model Context Protocol (MCP) & Tool Execution** | Upcoming | MCP server integrations for external tool execution (browsing, file manipulation, API querying), accompanied by an animated execution dashboard. |
 | **Step 6** | **Production Hardening, Polish & E2E Testing** | Upcoming | Latency optimization, error recovery, session persistence, accessible keyboard shortcuts, and deployment. |
+
+---
+
+## Step 4B Scope Checklist
+
+- [x] Configure supported Gemini text generation model in `backend/app/config.py` (`gemini_text_model`)
+- [x] Add explicit `google-genai>=2.29.0` to `backend/requirements.txt`
+- [x] Implement isolated Gemini text-generation service in `backend/app/services/gemini_service.py`
+- [x] Define typed `SkillAnalysisState` with `operator.add` event reducer in `backend/app/workflows/state.py`
+- [x] Define Pydantic models `SkillAnalysisRequest` and `SkillAnalysisResponse` with rigorous validation
+- [x] Implement discrete workflow nodes in `backend/app/workflows/skill_nodes.py`:
+  - `validate_input`: checks non-empty lists and trims whitespace
+  - `compare_skills`: deterministic Python set comparison with case & whitespace normalization
+  - `analyze_skill_gaps`: Gemini text model semantic gap analysis & priority ranking
+  - `validate_analysis`: strict schema validation of returned output
+- [x] Build and compile LangGraph `StateGraph` in `backend/app/workflows/skill_graph.py` with async runner
+- [x] Implement `POST /api/workflows/skill-analysis` endpoint in `backend/app/routes/workflows.py`
+- [x] Emit real lifecycle execution events (`node_start`, `node_finish`, `node_error`) with actual durations
+- [x] Maintain 100% backward compatibility for `/health`, `/api/voice/*`, and `/api/workflows/demo`
+- [x] Add comprehensive test suite in `backend/tests/test_skill_analysis.py` (26 tests covering all edge cases)
 
 ---
 
