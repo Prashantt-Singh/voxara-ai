@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.workflows.state import (
@@ -24,6 +24,7 @@ from app.workflows.state import (
 )
 from app.workflows.graph import run_workflow
 from app.workflows.skill_graph import run_skill_analysis_workflow
+from app.workflows.execution_store import execution_store
 
 logger = logging.getLogger("voxara-api")
 
@@ -47,13 +48,17 @@ class WorkflowEngineStatusResponse(BaseModel):
         default_factory=lambda: ["demo", "skill-analysis"],
         description="List of available executable workflows",
     )
+    voice_tools_registered: list[str] = Field(
+        default_factory=lambda: ["analyze_skills_demonstration", "run_demo_workflow"],
+        description="Registered LiveKit voice agent workflow tools",
+    )
     details: str = Field(description="Operational status description")
 
 
 @router.get("/status", response_model=WorkflowEngineStatusResponse)
 async def get_workflow_status():
     """
-    Returns workflow engine readiness and registered graph metadata.
+    Returns workflow engine readiness, registered graph metadata, and voice tools.
     """
     return WorkflowEngineStatusResponse(
         status="ready",
@@ -66,7 +71,8 @@ async def get_workflow_status():
             "validate_analysis",
         ],
         available_workflows=["demo", "skill-analysis"],
-        details="LangGraph agentic workflow orchestration engine initialized and ready.",
+        voice_tools_registered=["analyze_skills_demonstration", "run_demo_workflow"],
+        details="LangGraph agentic workflow orchestration engine and voice tools initialized and ready.",
     )
 
 
@@ -93,6 +99,9 @@ async def run_demo_workflow_endpoint(req: WorkflowDemoRequest):
         task=req.task,
         input_data=req.input_data,
     )
+
+    # Record execution in shared observability store
+    execution_store.save_execution(final_state)
 
     event_models = [
         ExecutionEventModel(
@@ -153,6 +162,9 @@ async def run_skill_analysis_endpoint(req: SkillAnalysisRequest):
         optional_context=req.optional_context,
     )
 
+    # Record execution in shared observability store
+    execution_store.save_execution(final_state)
+
     event_models = [
         ExecutionEventModel(
             event_id=evt["event_id"],
@@ -179,3 +191,29 @@ async def run_skill_analysis_endpoint(req: SkillAnalysisRequest):
         events=event_models,
         error=final_state.get("error"),
     )
+
+
+@router.get("/executions")
+async def list_recent_executions(limit: int = 20):
+    """
+    Returns recent workflow execution logs across voice and REST calls.
+    Ordered from newest to oldest.
+    """
+    return {
+        "count": len(execution_store.list_executions(limit=limit)),
+        "executions": execution_store.list_executions(limit=limit),
+    }
+
+
+@router.get("/executions/{execution_id}")
+async def get_execution_record(execution_id: str):
+    """
+    Retrieves full execution state and node event logs for a specific workflow run.
+    """
+    record = execution_store.get_execution(execution_id)
+    if not record:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Execution with ID '{execution_id}' not found.",
+        )
+    return record

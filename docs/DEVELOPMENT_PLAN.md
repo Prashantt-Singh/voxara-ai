@@ -13,9 +13,26 @@ This document outlines the phased roadmap for building Voxara AI into a producti
 | **Step 3** | **Gemini Live Multimodal Voice AI Integration** | **Completed** | Official LiveKit Google plugin integration (`livekit-plugins-google`), Gemini Live bidirectional voice model (`RealtimeModel`), `AgentSession` loop, spoken greeting and conversation. |
 | **Step 4A** | **Agentic Workflow Foundation (LangGraph)** | **Completed** | Introduce LangGraph StateGraph orchestration layer, typed execution state, sequential nodes (`receive_request` -> `validate_request` -> `produce_result`), execution lifecycle events with true durations, and POST `/api/workflows/demo`. |
 | **Step 4B** | **Gemini-Powered Skill Analysis Workflow** | **Completed** | Implement dedicated LangGraph workflow (`validate_input` -> `compare_skills` -> `analyze_skill_gaps` -> `validate_analysis`), deterministic Python set math, isolated Google GenAI text service, structured Pydantic schemas, and `POST /api/workflows/skill-analysis`. |
-| **Step 4C** | **Voice Agent & LangGraph Integration** | Upcoming | Invoke LangGraph workflows from LiveKit voice agent without persistent competing loops. |
+| **Step 4C** | **Voice Agent & LangGraph Integration** | **Completed** | Connect LiveKit voice agent (Gemini Live) to LangGraph workflows via function tools (`analyze_skills_demonstration`, `run_demo_workflow`) without competing loops; async non-blocking execution, execution store tracking, and voice-friendly spoken responses. |
 | **Step 5** | **Model Context Protocol (MCP) & Tool Execution** | Upcoming | MCP server integrations for external tool execution (browsing, file manipulation, API querying), accompanied by an animated execution dashboard. |
 | **Step 6** | **Production Hardening, Polish & E2E Testing** | Upcoming | Latency optimization, error recovery, session persistence, accessible keyboard shortcuts, and deployment. |
+
+---
+
+## Step 4C Scope Checklist
+
+- [x] Inspect existing LiveKit agent, Gemini Live configuration, LangGraph graphs, and FastAPI endpoints
+- [x] Select Approach A: Tool-based invocation via LiveKit `@llm.function_tool` preserving real-time audio duplex
+- [x] Create LiveKit Agent tools in `backend/app/agent_tools.py`:
+  - `analyze_skills_demonstration`: Step 4B Gemini-powered skill analysis LangGraph workflow
+  - `run_demo_workflow`: Step 4A sequential state transition demonstration workflow
+- [x] Enforce strict input validation, timeouts (`asyncio.wait_for`), and structured voice-friendly summaries
+- [x] Implement thread-safe execution event store in `backend/app/workflows/execution_store.py`
+- [x] Register tools with `Agent(tools=VOICE_AGENT_TOOLS)` in `backend/app/agent.py`
+- [x] Update `VOXARA_SYSTEM_PROMPT` to protect ordinary conversational turns and prevent hallucinations
+- [x] Expose execution retrieval endpoints (`GET /api/workflows/executions`, `GET /api/workflows/executions/{id}`)
+- [x] Preserve existing token generation (`POST /api/voice/token`) and `/health` endpoints
+- [x] Add comprehensive integration test suite in `backend/tests/test_agent_workflow_integration.py` (14 passing tests)
 
 ---
 

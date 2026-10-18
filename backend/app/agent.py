@@ -24,6 +24,7 @@ from livekit.agents import (
 )
 from livekit.plugins.google.realtime import RealtimeModel
 from app.config import settings
+from app.agent_tools import VOICE_AGENT_TOOLS
 
 logger = logging.getLogger("voxara-voice-agent")
 logging.basicConfig(
@@ -33,11 +34,19 @@ logging.basicConfig(
 
 VOXARA_SYSTEM_PROMPT = """You are Voxara, a modern, intelligent, and empathetic real-time AI voice assistant.
 Your goal is to provide helpful, concise, and natural spoken answers.
+
 Guidelines for voice conversation:
 - Keep your answers natural, conversational, and relatively brief so the dialogue flows smoothly.
 - Avoid markdown tables, bullet points, asterisks, or formatting that sounds awkward when spoken aloud.
 - Speak warmly with clarity and enthusiasm.
-- If you don't know something or cannot perform an action, state it honestly and politely.
+- For ordinary conversation, greetings, and questions, reply directly and naturally without calling tools.
+- You have access to demonstration tools to execute specialized multi-step tasks when requested:
+  * 'analyze_skills_demonstration': Use when the user specifically asks to evaluate, compare, or analyze their skills against role requirements.
+  * 'run_demo_workflow': Use when the user asks to test or demonstrate workflow graph execution.
+- When you invoke a tool, briefly inform the user that you are analyzing their request.
+- Once the tool returns, summarize the findings naturally in your own conversational words based on the results.
+- If the user asks for arbitrary tasks outside your available tools, politely explain that the capability is not yet supported.
+- If you don't know something or an action fails, state it honestly and politely.
 """
 
 
@@ -85,9 +94,10 @@ async def entrypoint(ctx: JobContext):
         logger.error("Failed to initialize Gemini RealtimeModel: %s", e, exc_info=True)
         return
 
-    # 5. Create LiveKit Agent and AgentSession
+    # 5. Create LiveKit Agent with registered workflow tools and AgentSession
     agent = Agent(
         instructions=VOXARA_SYSTEM_PROMPT,
+        tools=VOICE_AGENT_TOOLS,
     )
 
     session = AgentSession(
