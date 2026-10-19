@@ -297,7 +297,7 @@ def test_ordinary_conversation_instructions():
 
 def test_voice_agent_tools_registration():
     """Verifies that all registered tools have complete metadata and valid schemas."""
-    assert len(VOICE_AGENT_TOOLS) == 2
+    assert len(VOICE_AGENT_TOOLS) >= 2
     tool_names = [tool.info.name for tool in VOICE_AGENT_TOOLS]
     assert "analyze_skills_demonstration" in tool_names
     assert "run_demo_workflow" in tool_names

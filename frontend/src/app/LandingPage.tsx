@@ -4,10 +4,11 @@ import { useVoiceSession } from '../hooks/useVoiceSession';
 import { AssistantOrb } from '../components/assistant/AssistantOrb';
 import { MessageInput } from '../components/assistant/MessageInput';
 import { StateSelector } from '../components/assistant/StateSelector';
+import { ActivityDrawer } from '../components/assistant/ActivityDrawer';
 import { Header } from '../components/layout/Header';
 import { Container } from '../components/layout/Container';
 import { ASSISTANT_STATES } from '../types/assistant';
-import { Info, Sparkles, AlertCircle, Radio, PhoneOff, ShieldAlert } from 'lucide-react';
+import { Info, Sparkles, AlertCircle, Radio, PhoneOff, ShieldAlert, Compass, BookmarkCheck, Activity } from 'lucide-react';
 
 export const LandingPage: React.FC = () => {
   // Manual state override for UI development & previewing states
@@ -29,6 +30,8 @@ export const LandingPage: React.FC = () => {
 
   const [lastSubmission, setLastSubmission] = useState<string | null>(null);
   const [textNotice, setTextNotice] = useState<string | null>(null);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [drawerTab, setDrawerTab] = useState<'opportunities' | 'pipeline' | 'telemetry' | 'notifications'>('opportunities');
 
   // Active assistant visual state is driven by LiveKit voice events unless manual test mode is triggered
   const effectiveState = manualMode ? manualState : voiceAssistantState;
@@ -49,9 +52,8 @@ export const LandingPage: React.FC = () => {
   };
 
   const handlePlusClick = () => {
-    setTextNotice(
-      'Attachment / Tool action triggered. (MCP tools and workflow attachments will be connected in Step 6).'
-    );
+    setDrawerTab('opportunities');
+    setIsDrawerOpen(true);
   };
 
   return (
@@ -134,6 +136,40 @@ export const LandingPage: React.FC = () => {
             <p className="text-xs sm:text-sm text-neutral-400 font-light pt-1">
               {metadata.description}
             </p>
+          </div>
+
+          {/* Workflow Quick Access Pills */}
+          <div className="flex flex-wrap items-center justify-center gap-2 mb-4 max-w-lg">
+            <button
+              onClick={() => {
+                setDrawerTab('opportunities');
+                setIsDrawerOpen(true);
+              }}
+              className="px-3 py-1.5 rounded-full text-xs font-medium bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/80 transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+            >
+              <Compass className="w-3.5 h-3.5 text-amber-600" />
+              <span>Opportunity Hunter</span>
+            </button>
+            <button
+              onClick={() => {
+                setDrawerTab('pipeline');
+                setIsDrawerOpen(true);
+              }}
+              className="px-3 py-1.5 rounded-full text-xs font-medium bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200/80 transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+            >
+              <BookmarkCheck className="w-3.5 h-3.5 text-blue-600" />
+              <span>My Applications</span>
+            </button>
+            <button
+              onClick={() => {
+                setDrawerTab('telemetry');
+                setIsDrawerOpen(true);
+              }}
+              className="px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200/80 transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+            >
+              <Activity className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Telemetry</span>
+            </button>
           </div>
 
           {/* Message / Voice Input Bar */}
@@ -227,6 +263,12 @@ export const LandingPage: React.FC = () => {
           </div>
         </Container>
       </footer>
+      {/* Activity Drawer & Telemetry Panel */}
+      <ActivityDrawer
+        isOpen={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        activeTabDefault={drawerTab}
+      />
     </div>
   );
 };

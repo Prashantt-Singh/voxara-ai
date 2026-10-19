@@ -26,6 +26,7 @@ from livekit.agents import llm
 
 from app.workflows.graph import run_workflow
 from app.workflows.skill_graph import run_skill_analysis_workflow
+from app.workflows.opportunity_graph import run_opportunity_hunter_workflow
 from app.workflows.execution_store import execution_store
 
 logger = logging.getLogger("voxara-agent-tools")
@@ -288,8 +289,63 @@ async def run_demo_workflow(
         }
 
 
+@llm.function_tool(
+    description=(
+        "Discovers verified internships, hackathons, and technology programs matching "
+        "user preferences. Tracks submission deadlines and provides real opportunities. "
+        "Use this tool when the user asks to find hackathons, internships, scholarships, "
+        "or deadline reminders."
+    )
+)
+async def hunt_opportunities_tool(
+    query: str = "all",
+    opportunity_type: str = "all",
+) -> dict[str, Any]:
+    """
+    Executes the Opportunity Hunter LangGraph workflow on behalf of the voice agent.
+    """
+    logger.info("Voice agent invoked 'hunt_opportunities_tool' with query='%s', type='%s'", query, opportunity_type)
+
+    try:
+        final_state = await asyncio.wait_for(
+            run_opportunity_hunter_workflow(
+                query=query,
+                opportunity_type=opportunity_type,
+            ),
+            timeout=WORKFLOW_TIMEOUT_SECONDS,
+        )
+
+        execution_store.save_execution(final_state)
+        status = final_state.get("status", "completed")
+        briefing = final_state.get("spoken_briefing") or "I completed the opportunity search."
+
+        return {
+            "status": status,
+            "execution_id": final_state.get("execution_id"),
+            "found_count": len(final_state.get("opportunities", [])),
+            "opportunities": final_state.get("opportunities", [])[:3],
+            "urgent_deadlines": final_state.get("urgent_deadlines", [])[:2],
+            "summary_for_voice": briefing,
+        }
+    except asyncio.TimeoutError:
+        logger.error("Opportunity Hunter workflow timed out.")
+        return {
+            "status": "failed",
+            "error": "Workflow timed out.",
+            "summary_for_voice": "The opportunity search timed out. Please try again with a narrower query.",
+        }
+    except Exception as exc:
+        logger.error("Error executing Opportunity Hunter: %s", exc, exc_info=True)
+        return {
+            "status": "failed",
+            "error": str(exc),
+            "summary_for_voice": "I encountered an error while searching for opportunities.",
+        }
+
+
 # List of tools to register with the LiveKit voice agent
 VOICE_AGENT_TOOLS = [
+    hunt_opportunities_tool,
     analyze_skills_demonstration,
     run_demo_workflow,
 ]

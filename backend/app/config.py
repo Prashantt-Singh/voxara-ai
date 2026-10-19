@@ -57,6 +57,13 @@ class Settings(BaseSettings):
         description="Google Gemini model ID for text generation and skill gap analysis",
     )
 
+    # Database settings
+    database_url: str = Field(
+        default="sqlite+aiosqlite:///./data/voxara.db",
+        validation_alias="DATABASE_URL",
+        description="SQLAlchemy Database URL (PostgreSQL with asyncpg for Neon/Supabase, or aiosqlite for local testing)",
+    )
+
     # Server settings
     host: str = Field(default="0.0.0.0", validation_alias="HOST")
     port: int = Field(default=8000, validation_alias="PORT")
@@ -64,6 +71,33 @@ class Settings(BaseSettings):
         default="http://localhost:5173,http://127.0.0.1:5173",
         validation_alias="CORS_ORIGINS",
     )
+
+    @property
+    def normalized_database_url(self) -> str:
+        """
+        Normalizes database URL format:
+        - If 'postgres://' or 'postgresql://' is provided, ensures asyncpg driver: 'postgresql+asyncpg://'
+        - If relative sqlite URL, ensures valid absolute path with forward slashes and creates parent directory.
+        """
+        url = self.database_url.strip()
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif url.startswith("postgresql://") and not url.startswith("postgresql+"):
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        elif url.startswith("sqlite:///") and not url.startswith("sqlite+"):
+            url = url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
+
+        if url.startswith("sqlite+aiosqlite:///") and not url.endswith(":memory:"):
+            from pathlib import Path
+            raw_path = url.replace("sqlite+aiosqlite:///", "", 1)
+            path_obj = Path(raw_path)
+            if not path_obj.is_absolute():
+                backend_dir = Path(__file__).resolve().parents[1]
+                path_obj = (backend_dir / raw_path).resolve()
+            path_obj.parent.mkdir(parents=True, exist_ok=True)
+            url = f"sqlite+aiosqlite:///{path_obj.as_posix()}"
+
+        return url
 
     @property
     def cors_origin_list(self) -> List[str]:

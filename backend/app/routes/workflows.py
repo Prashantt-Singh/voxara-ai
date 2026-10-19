@@ -45,11 +45,15 @@ class WorkflowEngineStatusResponse(BaseModel):
         description="Registered graph nodes in the skill analysis pipeline",
     )
     available_workflows: list[str] = Field(
-        default_factory=lambda: ["demo", "skill-analysis"],
+        default_factory=lambda: ["demo", "skill-analysis", "opportunity-hunter"],
         description="List of available executable workflows",
     )
     voice_tools_registered: list[str] = Field(
-        default_factory=lambda: ["analyze_skills_demonstration", "run_demo_workflow"],
+        default_factory=lambda: [
+            "hunt_opportunities_tool",
+            "analyze_skills_demonstration",
+            "run_demo_workflow",
+        ],
         description="Registered LiveKit voice agent workflow tools",
     )
     details: str = Field(description="Operational status description")
@@ -70,9 +74,13 @@ async def get_workflow_status():
             "analyze_skill_gaps",
             "validate_analysis",
         ],
-        available_workflows=["demo", "skill-analysis"],
-        voice_tools_registered=["analyze_skills_demonstration", "run_demo_workflow"],
-        details="LangGraph agentic workflow orchestration engine and voice tools initialized and ready.",
+        available_workflows=["demo", "skill-analysis", "opportunity-hunter"],
+        voice_tools_registered=[
+            "hunt_opportunities_tool",
+            "analyze_skills_demonstration",
+            "run_demo_workflow",
+        ],
+        details="LangGraph agentic workflow orchestration engine, voice tools, and monitoring pipelines initialized and ready.",
     )
 
 

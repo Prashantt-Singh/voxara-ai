@@ -30,7 +30,7 @@ class WorkflowExecutionStore:
 
     def save_execution(self, record: Dict[str, Any]) -> None:
         """
-        Saves or updates a workflow execution record.
+        Saves or updates a workflow execution record in-memory and in SQLite.
         """
         exec_id = record.get("execution_id")
         if not exec_id:
@@ -45,12 +45,27 @@ class WorkflowExecutionStore:
                 # Evict oldest record
                 self._records.popitem(last=False)
 
+        # Asynchronously or synchronously persist to database
+        try:
+            from app.db.repository import _sync_save_execution
+            _sync_save_execution(record)
+        except Exception as exc:
+            logger.debug("Failed to persist execution %s to DB: %s", exec_id, exc)
+
     def get_execution(self, execution_id: str) -> Optional[Dict[str, Any]]:
         """
-        Retrieves a workflow execution record by its execution_id.
+        Retrieves a workflow execution record by its execution_id from memory or SQLite.
         """
         with self._lock:
-            return self._records.get(execution_id)
+            cached = self._records.get(execution_id)
+            if cached:
+                return cached
+
+        try:
+            from app.db.repository import _sync_get_execution
+            return _sync_get_execution(execution_id)
+        except Exception:
+            return None
 
     def list_executions(self, limit: int = 20) -> List[Dict[str, Any]]:
         """

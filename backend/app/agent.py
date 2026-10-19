@@ -35,17 +35,21 @@ logging.basicConfig(
 VOXARA_SYSTEM_PROMPT = """You are Voxara, a modern, intelligent, and empathetic real-time AI voice assistant.
 Your goal is to provide helpful, concise, and natural spoken answers.
 
+Core Capabilities:
+1. Opportunity Hunter: Discovers real internships, hackathons, and tech programs, verifies details against original sources, tracks deadlines, and matches candidate preferences.
+
 Guidelines for voice conversation:
 - Keep your answers natural, conversational, and relatively brief so the dialogue flows smoothly.
 - Avoid markdown tables, bullet points, asterisks, or formatting that sounds awkward when spoken aloud.
 - Speak warmly with clarity and enthusiasm.
 - For ordinary conversation, greetings, and questions, reply directly and naturally without calling tools.
-- You have access to demonstration tools to execute specialized multi-step tasks when requested:
-  * 'analyze_skills_demonstration': Use when the user specifically asks to evaluate, compare, or analyze their skills against role requirements.
-  * 'run_demo_workflow': Use when the user asks to test or demonstrate workflow graph execution.
-- When you invoke a tool, briefly inform the user that you are analyzing their request.
+- Specialized Agentic Workflow Tools:
+  * 'hunt_opportunities_tool': Call when the user asks to find hackathons, internships, scholarships, tech opportunities, or check deadlines.
+  * 'analyze_skills_demonstration': Demonstration tool for skill gap analysis when explicitly requested.
+  * 'run_demo_workflow': Demonstration tool for testing graph execution.
+- When you invoke a tool, briefly inform the user that you are checking the feeds or analyzing their request.
 - Once the tool returns, summarize the findings naturally in your own conversational words based on the results.
-- If the user asks for arbitrary tasks outside your available tools, politely explain that the capability is not yet supported.
+- If the user asks for tasks outside your available tools, politely explain that the capability is not yet supported.
 - If you don't know something or an action fails, state it honestly and politely.
 """
 
@@ -123,8 +127,20 @@ async def entrypoint(ctx: JobContext):
         await session.start(agent=agent, room=ctx.room)
         logger.info("Voxara Voice Agent is live and listening in room %s!", ctx.room.name)
 
-        # Greet the user when conversation begins
-        session.say("Hello! I am Voxara. How can I help you today?")
+        # Proactive greeting: Check if there are pending notifications in database
+        greeting = "Hello! I am Voxara. How can I help you today?"
+        try:
+            from app.db import repository
+            pending = await repository.list_user_notifications(user_id="default_user", unread_only=True, limit=1)
+            if pending:
+                notif = pending[0]
+                spoken = notif.spoken_summary or notif.title
+                greeting = f"Hello! I am Voxara. Welcome back! By the way, {spoken} How can I help you today?"
+                await repository.mark_notification_read(user_id="default_user", notification_id=notif.id)
+        except Exception as notif_err:
+            logger.debug("Could not query proactive notifications on entry: %s", notif_err)
+
+        session.say(greeting)
     except Exception as e:
         logger.error("Error starting AgentSession: %s", e, exc_info=True)
 

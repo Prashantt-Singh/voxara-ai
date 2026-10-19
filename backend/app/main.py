@@ -3,7 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routes import voice, workflows
+from app.routes import voice, workflows, opportunities, preferences, notifications
+from app.services.scheduler_service import scheduler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,13 +34,20 @@ async def lifespan(app: FastAPI):
             "Gemini Live agent will require GOOGLE_API_KEY.",
             gemini_reason,
         )
+
+    # Start autonomous background monitoring scheduler
+    scheduler.start()
+
     yield
+
+    # Clean shutdown of background monitoring tasks
+    await scheduler.stop()
 
 
 app = FastAPI(
     title="Voxara AI Backend",
-    description="Real-time Agentic Voice AI Assistant Backend Infrastructure",
-    version="0.3.0",
+    description="Real-time Agentic Voice AI Assistant: Opportunity Hunter (Internships & Hackathons)",
+    version="0.6.0",
     lifespan=lifespan,
 )
 
@@ -55,6 +63,9 @@ app.add_middleware(
 # Register API Routers
 app.include_router(voice.router)
 app.include_router(workflows.router)
+app.include_router(opportunities.router)
+app.include_router(preferences.router)
+app.include_router(notifications.router)
 
 
 @app.get("/health")
@@ -68,4 +79,6 @@ async def health_check():
         "livekit_configured": is_livekit_ok,
         "gemini_configured": is_gemini_ok,
         "workflows_ready": True,
+        "scheduler_running": scheduler.is_running,
+        "database_ready": True,
     }

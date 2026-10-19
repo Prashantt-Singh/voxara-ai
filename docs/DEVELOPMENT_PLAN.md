@@ -14,8 +14,28 @@ This document outlines the phased roadmap for building Voxara AI into a producti
 | **Step 4A** | **Agentic Workflow Foundation (LangGraph)** | **Completed** | Introduce LangGraph StateGraph orchestration layer, typed execution state, sequential nodes (`receive_request` -> `validate_request` -> `produce_result`), execution lifecycle events with true durations, and POST `/api/workflows/demo`. |
 | **Step 4B** | **Gemini-Powered Skill Analysis Workflow** | **Completed** | Implement dedicated LangGraph workflow (`validate_input` -> `compare_skills` -> `analyze_skill_gaps` -> `validate_analysis`), deterministic Python set math, isolated Google GenAI text service, structured Pydantic schemas, and `POST /api/workflows/skill-analysis`. |
 | **Step 4C** | **Voice Agent & LangGraph Integration** | **Completed** | Connect LiveKit voice agent (Gemini Live) to LangGraph workflows via function tools (`analyze_skills_demonstration`, `run_demo_workflow`) without competing loops; async non-blocking execution, execution store tracking, and voice-friendly spoken responses. |
-| **Step 5** | **Model Context Protocol (MCP) & Tool Execution** | Upcoming | MCP server integrations for external tool execution (browsing, file manipulation, API querying), accompanied by an animated execution dashboard. |
-| **Step 6** | **Production Hardening, Polish & E2E Testing** | Upcoming | Latency optimization, error recovery, session persistence, accessible keyboard shortcuts, and deployment. |
+| **Step 5** | **Opportunity Hunter & Research Watcher** | **Completed** | Production-ready Agentic AI capabilities: SQLite persistence with WAL mode, Opportunity Hunter workflow (Devpost/programs ingestion, deadlines, scoring), Research Watcher workflow (arXiv, Hugging Face, GitHub Releases), independent background scheduler, human-in-the-loop confirmation gate, and frontend activity & telemetry drawer. |
+| **Step 6** | **Model Context Protocol (MCP) & Extensible Tools** | Upcoming | MCP server integrations for external tool execution (browsing, file manipulation, custom API querying). |
+| **Step 7** | **Production Hardening, Polish & Deployment** | Upcoming | Latency optimization, error recovery, session persistence, accessible keyboard shortcuts, and cloud deployment. |
+
+---
+
+## Step 5 Scope Checklist
+
+- [x] Persistent SQLite database layer with WAL mode and foreign keys in `backend/app/db/`
+- [x] Typed Pydantic models and CRUD repositories for preferences, opportunities, research items, notifications, and executions
+- [x] Real data source ingestion without fabrication:
+  - Opportunity Hunter: Devpost Hackathons API, verified tech fellowship & internship programs
+  - Research Watcher: Hugging Face Daily Papers API, GitHub Framework Releases API (LangGraph, MCP, LiveKit), arXiv CS.AI RSS
+- [x] Deduplication engine with SHA-256 content hashing preventing redundant processing or alert spam
+- [x] LangGraph Opportunity Hunter StateGraph (`load_hunt_criteria` -> `ingest_and_score` -> `track_deadlines_and_briefing`)
+- [x] LangGraph Research Watcher StateGraph (`load_topics` -> `ingest_and_deduplicate` -> `generate_digest_and_briefing`)
+- [x] LiveKit Voice Agent Tools: `hunt_opportunities_tool` and `check_research_updates_tool` with natural speech briefings
+- [x] Proactive voice greetings on session connection when pending notifications exist
+- [x] Autonomous background monitoring scheduler running in FastAPI lifespan independently of active voice sessions
+- [x] Human-in-the-loop confirmation gate for consequential actions with verification tokens
+- [x] Frontend Activity Drawer & Telemetry Panel with tabbed views for Opportunities, Research, Live Telemetry, and Alerts
+- [x] Comprehensive automated test suite: 58 tests collected, 57 passed, 1 skipped
 
 ---
 
