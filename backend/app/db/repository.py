@@ -15,7 +15,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from sqlalchemy import delete, desc, select, update
+from sqlalchemy import and_, delete, desc, func, or_, select, update
 from sqlalchemy.orm import selectinload
 
 from app.db.database import db_manager
@@ -167,26 +167,47 @@ async def update_user_preferences(
 
 async def save_shared_opportunity(data: OpportunityCreate) -> Opportunity:
     """
-    Saves a shared internship or hackathon.
-    Deduplicates via unique content_hash (SHA-256 of url + title).
+    Saves a shared internship, hackathon, or fellowship.
+    Deduplicates via unique content_hash (SHA-256 of url + title)
+    AND normalized (organization, title) to prevent duplicates across different sources.
     """
     content_hash = compute_content_hash(data.source_url, data.title)
+    norm_org = data.organization.strip().lower()
+    norm_title = data.title.strip().lower()
 
     async with db_manager.session() as session:
         result = await session.execute(
-            select(Opportunity).where(Opportunity.content_hash == content_hash)
+            select(Opportunity).where(
+                or_(
+                    Opportunity.content_hash == content_hash,
+                    and_(
+                        func.lower(Opportunity.organization) == norm_org,
+                        func.lower(Opportunity.title) == norm_title,
+                    ),
+                )
+            )
         )
-        existing = result.scalar_one_or_none()
+        existing = result.scalars().first()
 
         if existing:
-            # Update mutable fields
-            existing.description = data.description
-            existing.deadline = data.deadline
-            existing.eligibility = data.eligibility
-            existing.requirements = data.requirements
-            existing.prize_or_salary = data.prize_or_salary
+            # Update mutable fields without creating a duplicate record
+            existing.description = data.description or existing.description
+            if data.application_url is not None:
+                existing.application_url = data.application_url
+            if data.location is not None:
+                existing.location = data.location
+            if data.deadline is not None:
+                existing.deadline = data.deadline
+            if data.eligibility is not None:
+                existing.eligibility = data.eligibility
+            if data.requirements:
+                merged_reqs = list(dict.fromkeys(existing.requirements + data.requirements))
+                existing.requirements = merged_reqs
+            if data.prize_or_salary is not None:
+                existing.prize_or_salary = data.prize_or_salary
             existing.verified_status = data.verified_status
-            existing.verified_at = data.verified_at
+            if data.verified_at is not None:
+                existing.verified_at = data.verified_at
             await session.commit()
             await session.refresh(existing)
             return existing
@@ -196,10 +217,12 @@ async def save_shared_opportunity(data: OpportunityCreate) -> Opportunity:
             organization=data.organization,
             type=data.type,
             source_url=data.source_url,
+            application_url=data.application_url,
             source_name=data.source_name,
             content_hash=content_hash,
             deadline=data.deadline,
             description=data.description,
+            location=data.location,
             eligibility=data.eligibility,
             requirements=data.requirements,
             prize_or_salary=data.prize_or_salary,
@@ -226,6 +249,22 @@ async def get_shared_opportunity_by_id(opportunity_id: str) -> Optional[Opportun
             select(Opportunity).where(Opportunity.id == opportunity_id)
         )
         return result.scalar_one_or_none()
+
+
+async def delete_shared_opportunity(opportunity_id: str) -> bool:
+    """
+    Deletes a shared opportunity by ID. Returns True if deleted, False if not found.
+    """
+    async with db_manager.session() as session:
+        result = await session.execute(
+            select(Opportunity).where(Opportunity.id == opportunity_id)
+        )
+        opp = result.scalar_one_or_none()
+        if opp is None:
+            return False
+        await session.delete(opp)
+        await session.commit()
+        return True
 
 
 async def list_shared_opportunities(
@@ -616,6 +655,8 @@ def _opp_to_model(opp: Opportunity) -> OpportunityModel:
         organization=opp.organization,
         type=opp.type,
         source_url=opp.source_url,
+        application_url=getattr(opp, "application_url", None),
+        location=getattr(opp, "location", None),
         source_name=opp.source_name,
         content_hash=opp.content_hash,
         deadline=opp.deadline.isoformat() if opp.deadline else None,
@@ -625,7 +666,7 @@ def _opp_to_model(opp: Opportunity) -> OpportunityModel:
         prize_or_salary=opp.prize_or_salary,
         verified_status=opp.verified_status,
         verified_at=opp.verified_at.isoformat() if opp.verified_at else None,
-        discovered_at=opp.discovered_at.isoformat() if opp.discovered_at else None,
+        discovered_at=opp.discovered_at.isoformat() if opp.discovered_at else current_utc_iso(),
         match_score=0.8,
     )
 
@@ -651,6 +692,8 @@ async def save_opportunity(data: Any) -> OpportunityModel:
         organization=getattr(data, "organization", ""),
         type=getattr(data, "type", "hackathon"),
         source_url=getattr(data, "source_url", ""),
+        application_url=getattr(data, "application_url", None),
+        location=getattr(data, "location", None),
         source_name=getattr(data, "source_name", "Devpost"),
         description=getattr(data, "description", ""),
         deadline=deadline_dt,

@@ -57,11 +57,11 @@ class Settings(BaseSettings):
         description="Google Gemini model ID for text generation and skill gap analysis",
     )
 
-    # Database settings
+    # Database settings (PostgreSQL via asyncpg is the primary database)
     database_url: str = Field(
-        default="sqlite+aiosqlite:///./data/voxara.db",
+        default="",
         validation_alias="DATABASE_URL",
-        description="SQLAlchemy Database URL (PostgreSQL with asyncpg for Neon/Supabase, or aiosqlite for local testing)",
+        description="SQLAlchemy PostgreSQL Database URL with asyncpg (e.g. postgresql+asyncpg://postgres:postgres@localhost:5432/voxara_ai)",
     )
 
     # Server settings
@@ -75,27 +75,58 @@ class Settings(BaseSettings):
     @property
     def normalized_database_url(self) -> str:
         """
-        Normalizes database URL format:
-        - If 'postgres://' or 'postgresql://' is provided, ensures asyncpg driver: 'postgresql+asyncpg://'
-        - If relative sqlite URL, ensures valid absolute path with forward slashes and creates parent directory.
+        Normalizes and strictly validates the database URL for PostgreSQL:
+        - Ensures DATABASE_URL is configured (no silent fallback).
+        - Rejects SQLite (PostgreSQL is required as the primary database).
+        - Normalizes 'postgres://' and 'postgresql://' prefixes to 'postgresql+asyncpg://'.
+        - Converts '?sslmode=require' to '?ssl=require' for asyncpg compatibility.
         """
-        url = self.database_url.strip()
+        raw_url = (self.database_url or "").strip()
+        if not raw_url:
+            raise ValueError(
+                "DATABASE_URL is not configured. PostgreSQL is the primary database for Voxara AI. "
+                "Please configure DATABASE_URL in your environment or .env file "
+                "(e.g., DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/voxara_ai or cloud PostgreSQL)."
+            )
+
+        if raw_url.startswith("sqlite"):
+            raise ValueError(
+                "SQLite is not supported as the primary database for Voxara AI. "
+                "PostgreSQL with asyncpg is required. "
+                "Please configure DATABASE_URL=postgresql+asyncpg://<username>:<password>@<host>:<port>/<dbname> "
+                "or provide a PostgreSQL connection from Supabase / Neon."
+            )
+
+        url = raw_url
         if url.startswith("postgres://"):
             url = url.replace("postgres://", "postgresql+asyncpg://", 1)
         elif url.startswith("postgresql://") and not url.startswith("postgresql+"):
             url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
-        elif url.startswith("sqlite:///") and not url.startswith("sqlite+"):
-            url = url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
 
-        if url.startswith("sqlite+aiosqlite:///") and not url.endswith(":memory:"):
-            from pathlib import Path
-            raw_path = url.replace("sqlite+aiosqlite:///", "", 1)
-            path_obj = Path(raw_path)
-            if not path_obj.is_absolute():
-                backend_dir = Path(__file__).resolve().parents[1]
-                path_obj = (backend_dir / raw_path).resolve()
-            path_obj.parent.mkdir(parents=True, exist_ok=True)
-            url = f"sqlite+aiosqlite:///{path_obj.as_posix()}"
+        if not url.startswith("postgresql+asyncpg://"):
+            raise ValueError(
+                f"Unsupported database URL scheme in '{url}'. "
+                "Voxara AI requires PostgreSQL with the asyncpg driver (postgresql+asyncpg://...)."
+            )
+
+        # Normalize query parameters for asyncpg compatibility:
+        # 1. Convert 'sslmode=require' to 'ssl=require'
+        # 2. Filter out parameters unsupported by asyncpg (e.g., Neon's 'channel_binding')
+        from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+        parsed = urlparse(url)
+        if parsed.query:
+            query_tuples = parse_qsl(parsed.query, keep_blank_values=True)
+            cleaned_tuples = []
+            for k, v in query_tuples:
+                if k == "sslmode":
+                    cleaned_tuples.append(("ssl", "require" if v in ("require", "verify-ca", "verify-full") else v))
+                elif k in ("channel_binding",):
+                    # asyncpg handles SSL natively and rejects channel_binding
+                    continue
+                else:
+                    cleaned_tuples.append((k, v))
+            new_query = urlencode(cleaned_tuples)
+            url = urlunparse(parsed._replace(query=new_query))
 
         return url
 
@@ -104,6 +135,24 @@ class Settings(BaseSettings):
         if not self.cors_origins or self.cors_origins.strip() == "*":
             return ["*"]
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    def validate_database_credentials(self) -> tuple[bool, str]:
+        """
+        Validates whether PostgreSQL database credentials are configured and not placeholders.
+        Returns (is_valid, error_reason).
+        """
+        raw_url = (self.database_url or "").strip()
+        if not raw_url:
+            return False, "DATABASE_URL is not set."
+        if raw_url.startswith("sqlite"):
+            return False, "DATABASE_URL is set to SQLite, but PostgreSQL is required."
+        if "<password>" in raw_url or "<username>" in raw_url or "user:password@ep-sample" in raw_url:
+            return False, "DATABASE_URL contains placeholder values."
+        try:
+            _ = self.normalized_database_url
+            return True, ""
+        except ValueError as err:
+            return False, str(err)
 
     def validate_livekit_credentials(self) -> tuple[bool, str]:
         """

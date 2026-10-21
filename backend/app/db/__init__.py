@@ -1,5 +1,5 @@
 """
-Voxara AI - Database Package (SQLAlchemy 2.0 Multi-User PostgreSQL & Async SQLite)
+Voxara AI - Database Package (SQLAlchemy 2.0 Multi-User PostgreSQL with asyncpg)
 """
 
 from app.db.base import Base

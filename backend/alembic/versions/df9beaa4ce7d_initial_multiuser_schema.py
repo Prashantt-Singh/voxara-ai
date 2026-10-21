@@ -19,10 +19,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Upgrade schema for multi-user PostgreSQL (Neon/Supabase) and local SQLite."""
+    """Upgrade schema for multi-user PostgreSQL (Neon/Supabase)."""
     bind = op.get_bind()
-    inspector = sa.inspect(bind)
-    existing_tables = set(inspector.get_table_names())
+    existing_tables = set()
+    if bind is not None:
+        try:
+            inspector = sa.inspect(bind)
+            existing_tables = set(inspector.get_table_names())
+        except Exception:
+            existing_tables = set()
 
     # 1. Users table
     if 'users' not in existing_tables:

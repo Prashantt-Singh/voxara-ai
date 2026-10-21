@@ -112,10 +112,12 @@ class Opportunity(Base):
     organization: Mapped[str] = mapped_column(String(255), nullable=False)
     type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)  # 'internship' | 'hackathon'
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
-    source_name: Mapped[str] = mapped_column(String(128), nullable=False)  # 'Devpost', 'MLH', etc.
+    application_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_name: Mapped[str] = mapped_column(String(128), nullable=False)  # 'Devpost', 'SimplifyTech', etc.
     content_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     deadline: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
+    location: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     eligibility: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     requirements: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
     prize_or_salary: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

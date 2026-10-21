@@ -3,7 +3,7 @@ Voxara AI - Opportunities REST API Router (Phase 4)
 
 Endpoints:
 - POST /api/opportunities/hunt: Runs Opportunity Hunter workflow graph asynchronously.
-- GET /api/opportunities: Lists stored opportunities from SQLite with filtering.
+- GET /api/opportunities: Lists stored opportunities from PostgreSQL with filtering.
 - GET /api/opportunities/deadlines: Returns upcoming verified deadlines.
 """
 
@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.workflows.opportunity_state import (
     OpportunityHunterRequest,
@@ -21,6 +21,7 @@ from app.workflows.opportunity_state import (
 from app.workflows.opportunity_graph import run_opportunity_hunter_workflow
 from app.workflows.state import ExecutionEventModel
 from app.workflows.execution_store import execution_store
+from app.services.opportunity_service import opportunity_service
 from app.db import repository
 from app.db.models import (
     OpportunityModel,
@@ -32,6 +33,149 @@ from app.db.models import (
 logger = logging.getLogger("voxara-opportunities-router")
 
 router = APIRouter(prefix="/api/opportunities", tags=["opportunities"])
+
+
+class DiscoveryRequest(BaseModel):
+    query: Optional[str] = None
+    limit: int = Field(default=10, ge=1, le=100)
+    persist: bool = Field(default=True, description="Whether to persist results to shared database catalog")
+
+
+class DiscoveryResponse(BaseModel):
+    status: str = "success"
+    opportunity_type: str
+    count: int
+    opportunities: List[OpportunityModel]
+    sources_queried: List[str]
+
+
+# ---------------------------------------------------------------------------
+# Opportunity Discovery Endpoints (Phase 2)
+# ---------------------------------------------------------------------------
+
+@router.post("/discover/internships", response_model=DiscoveryResponse)
+async def discover_internships_endpoint(req: Optional[DiscoveryRequest] = None):
+    """
+    Discovers tech internships from SimplifyJobs and Arbeitnow.
+    Deduplicates and persists discovered records in the central catalog.
+    """
+    request_data = req or DiscoveryRequest()
+    try:
+        items = await opportunity_service.discover_internships(
+            limit=request_data.limit,
+            search_query=request_data.query,
+            persist=request_data.persist,
+        )
+        return DiscoveryResponse(
+            status="success",
+            opportunity_type="internship",
+            count=len(items),
+            opportunities=items,
+            sources_queried=["SimplifyJobs", "Arbeitnow"],
+        )
+    except Exception as exc:
+        logger.error("Error in discover_internships_endpoint: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internship discovery failed: {str(exc)}")
+
+
+@router.post("/discover/hackathons", response_model=DiscoveryResponse)
+async def discover_hackathons_endpoint(req: Optional[DiscoveryRequest] = None):
+    """
+    Discovers hackathons from Devpost API.
+    Deduplicates and persists discovered records in the central catalog.
+    """
+    request_data = req or DiscoveryRequest()
+    try:
+        items = await opportunity_service.discover_hackathons(
+            limit=request_data.limit,
+            search_query=request_data.query,
+            persist=request_data.persist,
+        )
+        return DiscoveryResponse(
+            status="success",
+            opportunity_type="hackathon",
+            count=len(items),
+            opportunities=items,
+            sources_queried=["Devpost"],
+        )
+    except Exception as exc:
+        logger.error("Error in discover_hackathons_endpoint: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Hackathon discovery failed: {str(exc)}")
+
+
+@router.post("/discover/fellowships", response_model=DiscoveryResponse)
+async def discover_fellowships_endpoint(req: Optional[DiscoveryRequest] = None):
+    """
+    Discovers official fellowship and open source programs (GSoC, MLH Fellowship, LFX Mentorship).
+    Deduplicates and persists discovered records in the central catalog.
+    """
+    request_data = req or DiscoveryRequest()
+    try:
+        items = await opportunity_service.discover_fellowships(
+            limit=request_data.limit,
+            search_query=request_data.query,
+            persist=request_data.persist,
+        )
+        return DiscoveryResponse(
+            status="success",
+            opportunity_type="fellowship",
+            count=len(items),
+            opportunities=items,
+            sources_queried=["Google Summer of Code", "Major League Hacking", "Linux Foundation"],
+        )
+    except Exception as exc:
+        logger.error("Error in discover_fellowships_endpoint: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Fellowship discovery failed: {str(exc)}")
+
+
+@router.post("/discover", response_model=DiscoveryResponse)
+async def discover_opportunities_endpoint(
+    req: Optional[DiscoveryRequest] = None,
+    opportunity_type: str = Query(default="all", description="'internship', 'hackathon', 'fellowship', or 'all'"),
+):
+    """
+    Dispatches opportunity discovery for internships, hackathons, fellowships, or all.
+    """
+    request_data = req or DiscoveryRequest()
+    target_type = opportunity_type.lower()
+    try:
+        items = await opportunity_service.discover_opportunities(
+            opportunity_type=target_type,
+            limit=request_data.limit,
+            search_query=request_data.query,
+            persist=request_data.persist,
+        )
+        if target_type == "hackathon":
+            sources = ["Devpost"]
+        elif target_type == "internship":
+            sources = ["SimplifyJobs", "Arbeitnow"]
+        elif target_type in ("fellowship", "program", "fellowships", "programs"):
+            sources = ["Google Summer of Code", "Major League Hacking", "Linux Foundation"]
+        else:
+            sources = [
+                "Devpost",
+                "SimplifyJobs",
+                "Arbeitnow",
+                "Google Summer of Code",
+                "Major League Hacking",
+                "Linux Foundation",
+            ]
+
+        return DiscoveryResponse(
+            status="success",
+            opportunity_type=target_type,
+            count=len(items),
+            opportunities=items,
+            sources_queried=sources,
+        )
+    except Exception as exc:
+        logger.error("Error in discover_opportunities_endpoint: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Opportunity discovery failed: {str(exc)}")
+
+
+# ---------------------------------------------------------------------------
+# Opportunity Hunter LangGraph & Central Catalog Endpoints
+# ---------------------------------------------------------------------------
 
 
 @router.post("/hunt", response_model=OpportunityHunterResponse)
@@ -87,7 +231,7 @@ async def list_stored_opportunities(
     min_score: float = Query(default=0.0, ge=0.0, le=1.0, description="Minimum match score"),
     limit: int = Query(default=50, ge=1, le=100),
 ):
-    """Returns stored opportunities from SQLite, sorted by match score and recency."""
+    """Returns stored opportunities from PostgreSQL, sorted by match score and recency."""
     return await repository.list_opportunities(opp_type=type, min_score=min_score, limit=limit)
 
 

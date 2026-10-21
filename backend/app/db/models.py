@@ -99,10 +99,12 @@ class OpportunityRead(BaseModel):
     organization: str
     type: Literal["internship", "hackathon", "fellowship", "scholarship", "other"]
     source_url: str
+    application_url: Optional[str] = None
     source_name: str
     content_hash: str
     deadline: Optional[datetime] = None
     description: str
+    location: Optional[str] = None
     eligibility: Optional[str] = None
     requirements: List[str] = Field(default_factory=list)
     prize_or_salary: Optional[str] = None
@@ -118,9 +120,11 @@ class OpportunityCreate(BaseModel):
     organization: str
     type: Literal["internship", "hackathon", "fellowship", "scholarship", "other"]
     source_url: str
+    application_url: Optional[str] = None
     source_name: str
     description: str
     deadline: Optional[datetime] = None
+    location: Optional[str] = None
     eligibility: Optional[str] = None
     requirements: List[str] = Field(default_factory=list)
     prize_or_salary: Optional[str] = None
@@ -240,10 +244,12 @@ class OpportunityModel(BaseModel):
     organization: str
     type: str = "hackathon"
     source_url: str
+    application_url: Optional[str] = None
     source_name: str = "Devpost"
     content_hash: str
     deadline: Optional[Any] = None
     description: str = ""
+    location: Optional[str] = None
     eligibility: Optional[str] = None
     requirements: List[str] = Field(default_factory=list)
     match_score: float = 0.0
@@ -251,7 +257,7 @@ class OpportunityModel(BaseModel):
     prize_or_salary: Optional[str] = None
     verified_status: str = "verified"
     verified_at: Optional[Any] = None
-    discovered_at: Optional[Any] = None
+    discovered_at: Optional[str] = Field(default_factory=current_utc_iso)
 
     model_config = {"from_attributes": True}
 
