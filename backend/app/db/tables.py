@@ -83,6 +83,12 @@ class UserPreference(Base):
     )
     min_match_score: Mapped[float] = mapped_column(Float, default=0.6, nullable=False)
     notifications_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    preferred_locations: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+    remote_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    skills: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+    education_level: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    graduation_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    eligibility_context: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     user: Mapped["User"] = relationship("User", back_populates="preferences")
@@ -160,6 +166,34 @@ class SavedOpportunity(Base):
 
     user: Mapped["User"] = relationship("User", back_populates="saved_opportunities")
     opportunity: Mapped["Opportunity"] = relationship("Opportunity", back_populates="saved_by_users")
+
+    @property
+    def title(self) -> Optional[str]:
+        return self.opportunity.title if self.opportunity else None
+
+    @property
+    def organization(self) -> Optional[str]:
+        return self.opportunity.organization if self.opportunity else None
+
+    @property
+    def source_name(self) -> Optional[str]:
+        return self.opportunity.source_name if self.opportunity else None
+
+    @property
+    def source_url(self) -> Optional[str]:
+        return self.opportunity.source_url if self.opportunity else None
+
+    @property
+    def application_url(self) -> Optional[str]:
+        return self.opportunity.application_url if self.opportunity else None
+
+    @property
+    def deadline(self) -> Optional[datetime]:
+        return self.opportunity.deadline if self.opportunity else None
+
+    @property
+    def verified_status(self) -> Optional[str]:
+        return self.opportunity.verified_status if self.opportunity else None
 
 
 class Notification(Base):

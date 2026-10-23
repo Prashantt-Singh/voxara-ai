@@ -67,9 +67,15 @@ async def get_or_create_user(
             # Seed default preferences
             pref = UserPreference(
                 user_id=user.id,
-                preferred_types=["internship", "hackathon"],
+                preferred_types=["internship", "hackathon", "fellowship"],
                 target_roles=["AI Engineer", "Software Engineer"],
                 domains=["Artificial Intelligence", "Full Stack", "Systems"],
+                preferred_locations=[],
+                remote_only=False,
+                skills=[],
+                education_level=None,
+                graduation_year=None,
+                eligibility_context={},
                 min_match_score=0.6,
                 notifications_enabled=True,
             )
@@ -155,6 +161,30 @@ async def update_user_preferences(
             notif_enabled = getattr(actual_updates, "auto_monitor_enabled", None)
         if notif_enabled is not None:
             pref.notifications_enabled = notif_enabled
+
+        pref_locations = getattr(actual_updates, "preferred_locations", None)
+        if pref_locations is not None:
+            pref.preferred_locations = pref_locations
+
+        remote_only = getattr(actual_updates, "remote_only", None)
+        if remote_only is not None:
+            pref.remote_only = remote_only
+
+        skills = getattr(actual_updates, "skills", None)
+        if skills is not None:
+            pref.skills = skills
+
+        education_level = getattr(actual_updates, "education_level", None)
+        if education_level is not None:
+            pref.education_level = education_level
+
+        graduation_year = getattr(actual_updates, "graduation_year", None)
+        if graduation_year is not None:
+            pref.graduation_year = graduation_year
+
+        eligibility_context = getattr(actual_updates, "eligibility_context", None)
+        if eligibility_context is not None:
+            pref.eligibility_context = eligibility_context
 
         await session.commit()
         await session.refresh(pref)
@@ -269,15 +299,28 @@ async def delete_shared_opportunity(opportunity_id: str) -> bool:
 
 async def list_shared_opportunities(
     opp_type: Optional[str] = None,
+    opp_types: Optional[List[str]] = None,
+    include_expired: bool = True,
     limit: int = 50,
 ) -> List[Opportunity]:
     """
     Lists shared opportunities from the central catalog.
+    Supports filtering by single category, multiple categories, and excluding expired opportunities.
     """
+    now = datetime.now(timezone.utc)
     async with db_manager.session() as session:
         query = select(Opportunity)
         if opp_type and opp_type.lower() != "all":
             query = query.where(Opportunity.type == opp_type.lower())
+        elif opp_types:
+            clean_types = [t.lower().strip() for t in opp_types if t and t.lower().strip() != "all"]
+            if clean_types:
+                query = query.where(Opportunity.type.in_(clean_types))
+
+        if not include_expired:
+            # Exclude opportunities with past deadlines; keep opportunities where deadline is None (rolling/unspecified)
+            query = query.where(or_(Opportunity.deadline.is_(None), Opportunity.deadline >= now))
+
         query = query.order_by(desc(Opportunity.discovered_at)).limit(limit)
 
         result = await session.execute(query)
@@ -310,12 +353,21 @@ async def save_user_opportunity(
 ) -> SavedOpportunity:
     """
     Saves an opportunity into the user's personal pipeline.
-    If already saved, updates status/notes.
+    Validates that the target opportunity exists.
+    If already saved, updates status/notes idempotently.
     """
     # Ensure user exists
     await get_or_create_user(user_id=user_id)
 
     async with db_manager.session() as session:
+        # Verify that the shared opportunity exists
+        opp_result = await session.execute(
+            select(Opportunity).where(Opportunity.id == data.opportunity_id)
+        )
+        opp = opp_result.scalar_one_or_none()
+        if not opp:
+            raise ValueError(f"Opportunity with ID '{data.opportunity_id}' not found.")
+
         result = await session.execute(
             select(SavedOpportunity)
             .options(selectinload(SavedOpportunity.opportunity))
@@ -326,30 +378,71 @@ async def save_user_opportunity(
         )
         existing = result.scalar_one_or_none()
 
+        status_val = data.status.strip().lower() if isinstance(data.status, str) else data.status
+
         if existing:
-            existing.status = data.status
+            existing.status = status_val
             if data.notes is not None:
                 existing.notes = data.notes
             if data.match_score > 0:
                 existing.match_score = data.match_score
             if data.match_reason:
                 existing.match_reason = data.match_reason
+            existing.updated_at = datetime.now(timezone.utc)
             await session.commit()
-            await session.refresh(existing)
+            await session.refresh(existing, attribute_names=["opportunity"])
             return existing
 
         saved_item = SavedOpportunity(
             user_id=user_id,
             opportunity_id=data.opportunity_id,
-            status=data.status,
+            status=status_val,
             notes=data.notes,
             match_score=data.match_score,
             match_reason=data.match_reason,
+            saved_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
         session.add(saved_item)
         await session.commit()
         await session.refresh(saved_item, attribute_names=["opportunity"])
         return saved_item
+
+
+async def get_user_saved_opportunity(
+    user_id: str,
+    saved_id: str,
+) -> Optional[SavedOpportunity]:
+    """
+    Retrieves a single personal saved opportunity by ID for the authenticated user.
+    Strictly isolated by user_id for authorization.
+    """
+    async with db_manager.session() as session:
+        result = await session.execute(
+            select(SavedOpportunity)
+            .options(selectinload(SavedOpportunity.opportunity))
+            .where(SavedOpportunity.id == saved_id, SavedOpportunity.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
+
+async def get_user_saved_opportunity_by_opp_id(
+    user_id: str,
+    opportunity_id: str,
+) -> Optional[SavedOpportunity]:
+    """
+    Retrieves a personal saved opportunity by opportunity_id for the authenticated user.
+    """
+    async with db_manager.session() as session:
+        result = await session.execute(
+            select(SavedOpportunity)
+            .options(selectinload(SavedOpportunity.opportunity))
+            .where(
+                SavedOpportunity.opportunity_id == opportunity_id,
+                SavedOpportunity.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
 
 
 async def list_user_saved_opportunities(
@@ -359,7 +452,7 @@ async def list_user_saved_opportunities(
 ) -> List[SavedOpportunity]:
     """
     Retrieves personal saved opportunities for the user, with opportunity relationships.
-    Strictly isolated by user_id.
+    Strictly isolated by user_id. Supports case-insensitive status filtering.
     """
     async with db_manager.session() as session:
         query = (
@@ -368,7 +461,8 @@ async def list_user_saved_opportunities(
             .where(SavedOpportunity.user_id == user_id)
         )
         if status:
-            query = query.where(SavedOpportunity.status == status)
+            clean_status = status.strip().lower()
+            query = query.where(func.lower(SavedOpportunity.status) == clean_status)
         query = query.order_by(desc(SavedOpportunity.updated_at)).limit(limit)
 
         result = await session.execute(query)
@@ -394,17 +488,18 @@ async def update_user_saved_opportunity(
         if not saved:
             return None
 
-        if updates.status is not None:
-            saved.status = updates.status
-        if updates.notes is not None:
+        if "status" in updates.model_fields_set and updates.status is not None:
+            saved.status = updates.status.strip().lower() if isinstance(updates.status, str) else updates.status
+        if "notes" in updates.model_fields_set:
             saved.notes = updates.notes
-        if updates.match_score is not None:
+        if "match_score" in updates.model_fields_set and updates.match_score is not None:
             saved.match_score = updates.match_score
-        if updates.match_reason is not None:
+        if "match_reason" in updates.model_fields_set:
             saved.match_reason = updates.match_reason
 
+        saved.updated_at = datetime.now(timezone.utc)
         await session.commit()
-        await session.refresh(saved)
+        await session.refresh(saved, attribute_names=["opportunity"])
         return saved
 
 
@@ -412,6 +507,7 @@ async def delete_user_saved_opportunity(user_id: str, saved_id: str) -> bool:
     """
     Removes an opportunity from the user's personal pipeline.
     Authorization: user can only delete their own saved record.
+    Preserves the underlying shared opportunity record.
     """
     async with db_manager.session() as session:
         result = await session.execute(

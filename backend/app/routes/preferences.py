@@ -26,6 +26,15 @@ async def get_preferences_endpoint(
     return await repository.get_user_preferences(user_id=user_id)
 
 
+@router.post("", response_model=UserPreferencesModel)
+async def create_preferences_endpoint(
+    preferences: UserPreferencesUpdate,
+    user_id: str = Query(default="default_user", description="Authenticated user ID"),
+):
+    """Initializes or sets user preferences with provided criteria."""
+    return await repository.update_user_preferences(user_id=user_id, updates=preferences)
+
+
 @router.put("", response_model=UserPreferencesModel)
 async def update_preferences_endpoint(
     updates: UserPreferencesUpdate,

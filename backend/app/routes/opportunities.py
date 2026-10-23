@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.workflows.opportunity_state import (
@@ -22,12 +22,19 @@ from app.workflows.opportunity_graph import run_opportunity_hunter_workflow
 from app.workflows.state import ExecutionEventModel
 from app.workflows.execution_store import execution_store
 from app.services.opportunity_service import opportunity_service
+from app.services.matching_service import matching_service
+from app.services.auth_service import AuthenticatedUser, get_current_user
 from app.db import repository
 from app.db.models import (
     OpportunityModel,
     SavedOpportunityRead,
     SavedOpportunityCreate,
     SavedOpportunityUpdate,
+    StatusUpdateRequest,
+    NotesUpdateRequest,
+    OpportunityMatchResult,
+    MatchRequest,
+    MatchResponse,
 )
 
 logger = logging.getLogger("voxara-opportunities-router")
@@ -244,36 +251,221 @@ async def get_upcoming_deadlines_endpoint(
 
 
 # ---------------------------------------------------------------------------
-# User Pipeline & Saved Opportunity Endpoints (Multi-User)
+# Personalized Opportunity Matching Endpoints (Phase 4)
 # ---------------------------------------------------------------------------
 
-@router.post("/saved", response_model=SavedOpportunityRead)
-async def save_opportunity_for_user(
-    data: SavedOpportunityCreate,
+@router.get("/matches", response_model=MatchResponse)
+async def get_personalized_matches_endpoint(
+    user_id: str = Query(default="default_user", description="Authenticated user ID"),
+    category: Optional[str] = Query(default=None, description="Filter by category: 'internship', 'hackathon', 'fellowship'"),
+    domain: Optional[str] = Query(default=None, description="Optional domain keyword override"),
+    remote_only: Optional[bool] = Query(default=None, description="Filter strictly for remote opportunities"),
+    min_score: Optional[float] = Query(default=None, ge=0.0, le=1.0, description="Minimum match score threshold"),
+    include_expired: bool = Query(default=False, description="Whether to include expired opportunities"),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    """
+    Matches stored opportunities against the authenticated user's preferences.
+    Guarantees user-data isolation by reading only the requested user's preference record.
+    """
+    matches = await matching_service.match_user_opportunities(
+        user_id=user_id,
+        category=category,
+        domain_override=domain,
+        remote_only=remote_only,
+        min_score=min_score,
+        include_expired=include_expired,
+        limit=limit,
+    )
+    return MatchResponse(
+        status="success",
+        user_id=user_id,
+        total_matched=len(matches),
+        opportunities=matches,
+        criteria_applied={
+            "user_id": user_id,
+            "category": category,
+            "domain": domain,
+            "remote_only": remote_only,
+            "min_score": min_score,
+            "include_expired": include_expired,
+            "limit": limit,
+        },
+    )
+
+
+@router.post("/matches", response_model=MatchResponse)
+async def query_personalized_matches_endpoint(
+    req: MatchRequest,
     user_id: str = Query(default="default_user", description="Authenticated user ID"),
 ):
-    """Saves an opportunity to the user's personal tracking pipeline."""
-    return await repository.save_user_opportunity(user_id=user_id, data=data)
+    """
+    Personalized matching endpoint supporting explicit request payload criteria and profile overrides.
+    """
+    user_pref = await repository.get_user_preferences(user_id=user_id)
+
+    active_prefs = {
+        "preferred_types": [req.category] if req.category else user_pref.preferred_types,
+        "target_roles": req.roles if req.roles is not None else user_pref.target_roles,
+        "domains": req.domains if req.domains is not None else user_pref.domains,
+        "preferred_locations": req.preferred_locations if req.preferred_locations is not None else user_pref.preferred_locations,
+        "remote_only": req.remote_only if req.remote_only is not None else user_pref.remote_only,
+        "skills": req.skills if req.skills is not None else user_pref.skills,
+        "education_level": req.education_level if req.education_level is not None else user_pref.education_level,
+        "graduation_year": req.graduation_year if req.graduation_year is not None else user_pref.graduation_year,
+        "eligibility_context": user_pref.eligibility_context or {},
+        "min_match_score": req.min_score if req.min_score is not None else user_pref.min_match_score,
+    }
+
+    opps = await repository.list_shared_opportunities(
+        opp_type=req.category,
+        opp_types=[req.category] if req.category else active_prefs["preferred_types"],
+        include_expired=req.include_expired,
+        limit=100,
+    )
+
+    matched_results = []
+    score_threshold = active_prefs["min_match_score"]
+    for opp in opps:
+        res = matching_service.match_opportunity(
+            opp=opp,
+            preferences=active_prefs,
+            category_filter=req.category,
+            include_expired=req.include_expired,
+        )
+        if res and res.match_score >= score_threshold:
+            matched_results.append(res)
+
+    matched_results.sort(
+        key=lambda x: (
+            x.match_score,
+            x.deadline is not None,
+            -(x.deadline.timestamp() if x.deadline else 0),
+        ),
+        reverse=True,
+    )
+
+    final_list = matched_results[:req.limit]
+    return MatchResponse(
+        status="success",
+        user_id=user_id,
+        total_matched=len(final_list),
+        opportunities=final_list,
+        criteria_applied=req.model_dump(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# User Pipeline & Saved Opportunity Endpoints (Multi-User, Phase 5)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/saved", response_model=SavedOpportunityRead, status_code=200)
+async def save_opportunity_for_user(
+    data: SavedOpportunityCreate,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Saves an opportunity into the authenticated user's personal pipeline.
+    Validates that the target shared opportunity exists (HTTP 404 if missing).
+    If already saved, updates status/notes idempotently without creating duplicates.
+    """
+    try:
+        return await repository.save_user_opportunity(user_id=current_user.id, data=data)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.get("/saved", response_model=List[SavedOpportunityRead])
 async def list_user_saved_opportunities_endpoint(
-    user_id: str = Query(default="default_user", description="Authenticated user ID"),
-    status: Optional[str] = Query(default=None, description="Filter by status: saved, applied, interviewing, etc."),
+    status: Optional[str] = Query(default=None, description="Filter by status: saved, interested, applied, interviewing, offered, rejected, withdrawn"),
     limit: int = Query(default=50, ge=1, le=100),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    """Lists saved opportunities in the user's personal pipeline."""
-    return await repository.list_user_saved_opportunities(user_id=user_id, status=status, limit=limit)
+    """
+    Lists saved opportunities in the authenticated user's personal pipeline.
+    Includes opportunity source, application URL, deadline, and verification status.
+    Strictly isolated to the authenticated user identity.
+    """
+    return await repository.list_user_saved_opportunities(
+        user_id=current_user.id,
+        status=status,
+        limit=limit,
+    )
+
+
+@router.get("/saved/{saved_id}", response_model=SavedOpportunityRead)
+async def get_user_saved_opportunity_endpoint(
+    saved_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Retrieves a single saved opportunity with source, application URL, deadline,
+    and verification status. Verifies user ownership.
+    """
+    item = await repository.get_user_saved_opportunity(user_id=current_user.id, saved_id=saved_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Saved opportunity not found or unauthorized.")
+    return item
 
 
 @router.patch("/saved/{saved_id}", response_model=SavedOpportunityRead)
 async def update_user_saved_opportunity_endpoint(
     saved_id: str,
     updates: SavedOpportunityUpdate,
-    user_id: str = Query(default="default_user", description="Authenticated user ID"),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    """Updates application status (applied, interviewing, etc.) or personal notes."""
-    updated = await repository.update_user_saved_opportunity(user_id=user_id, saved_id=saved_id, updates=updates)
+    """
+    Updates application status (saved, interested, applied, interviewing, offered, rejected, withdrawn)
+    and/or personal notes. Verifies user ownership.
+    """
+    updated = await repository.update_user_saved_opportunity(
+        user_id=current_user.id,
+        saved_id=saved_id,
+        updates=updates,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Saved opportunity not found or unauthorized.")
+    return updated
+
+
+@router.patch("/saved/{saved_id}/status", response_model=SavedOpportunityRead)
+async def update_user_saved_opportunity_status_endpoint(
+    saved_id: str,
+    body: StatusUpdateRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Updates the application status for an opportunity.
+    Accepts: Saved, Interested, Applied, Interviewing, Offered, Rejected, Withdrawn.
+    Verifies user ownership.
+    """
+    updated = await repository.update_user_saved_opportunity(
+        user_id=current_user.id,
+        saved_id=saved_id,
+        updates=SavedOpportunityUpdate(status=body.status),
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Saved opportunity not found or unauthorized.")
+    return updated
+
+
+@router.patch("/saved/{saved_id}/notes", response_model=SavedOpportunityRead)
+async def update_user_saved_opportunity_notes_endpoint(
+    saved_id: str,
+    body: NotesUpdateRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Updates private notes for an opportunity.
+    Notes remain strictly private to the authenticated user.
+    Verifies user ownership.
+    """
+    updated = await repository.update_user_saved_opportunity(
+        user_id=current_user.id,
+        saved_id=saved_id,
+        updates=SavedOpportunityUpdate(notes=body.notes),
+    )
     if not updated:
         raise HTTPException(status_code=404, detail="Saved opportunity not found or unauthorized.")
     return updated
@@ -282,10 +474,14 @@ async def update_user_saved_opportunity_endpoint(
 @router.delete("/saved/{saved_id}")
 async def delete_user_saved_opportunity_endpoint(
     saved_id: str,
-    user_id: str = Query(default="default_user", description="Authenticated user ID"),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    """Removes an opportunity from the user's personal tracking pipeline."""
-    deleted = await repository.delete_user_saved_opportunity(user_id=user_id, saved_id=saved_id)
+    """
+    Removes an opportunity from the authenticated user's personal pipeline.
+    Verifies user ownership.
+    Does NOT delete the shared opportunity record.
+    """
+    deleted = await repository.delete_user_saved_opportunity(user_id=current_user.id, saved_id=saved_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Saved opportunity not found or unauthorized.")
     return {"status": "deleted", "saved_id": saved_id}

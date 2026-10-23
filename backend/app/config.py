@@ -72,6 +72,13 @@ class Settings(BaseSettings):
         validation_alias="CORS_ORIGINS",
     )
 
+    # Security & authentication settings
+    require_auth: bool = Field(
+        default=False,
+        validation_alias="REQUIRE_AUTH",
+        description="Whether to enforce strict Bearer authentication on protected endpoints",
+    )
+
     @property
     def normalized_database_url(self) -> str:
         """
