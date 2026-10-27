@@ -3,7 +3,6 @@ import { isSupabaseConfigured } from '../lib/supabaseClient';
 
 describe('Supabase Client Configuration', () => {
   it('identifies unconfigured state when environment variables are empty or placeholder', () => {
-    // Current test environment has empty VITE_SUPABASE_URL
     const configured = isSupabaseConfigured();
     expect(typeof configured).toBe('boolean');
   });
@@ -19,8 +18,8 @@ describe('Authentication Operations & Flow Logic', () => {
         signInWithOAuth: vi.fn(),
         signInWithPassword: vi.fn(),
         signUp: vi.fn(),
-        verifyOtp: vi.fn(),
         resend: vi.fn(),
+        exchangeCodeForSession: vi.fn(),
         signOut: vi.fn(),
         getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
         onAuthStateChange: vi.fn().mockReturnValue({
@@ -30,7 +29,7 @@ describe('Authentication Operations & Flow Logic', () => {
     };
   });
 
-  describe('Step 3: Google Sign-In with OAuth', () => {
+  describe('Google Sign-In with OAuth', () => {
     it('initiates official Supabase Google OAuth flow with redirect and PKCE options', async () => {
       mockSupabase.auth.signInWithOAuth.mockResolvedValue({
         data: { url: 'https://accounts.google.com/o/oauth2/v2/auth?...', provider: 'google' },
@@ -78,7 +77,7 @@ describe('Authentication Operations & Flow Logic', () => {
     });
   });
 
-  describe('Step 4: Email/Password Signup & 6-Digit OTP Verification', () => {
+  describe('Email/Password Signup & Verification Link Flow', () => {
     it('enforces minimum password length of 8 characters', () => {
       const shortPassword = 'short';
       const isValid = shortPassword.length >= 8;
@@ -88,7 +87,15 @@ describe('Authentication Operations & Flow Logic', () => {
       expect(validPassword.length >= 8).toBe(true);
     });
 
-    it('submits signup with email and password and requires confirmation', async () => {
+    it('validates password matching on signup', () => {
+      const password: string = 'Password123!';
+      const confirmPassword: string = 'Password123!';
+      const mismatch: string = 'PasswordMismatch!';
+      expect(password === confirmPassword).toBe(true);
+      expect(password === mismatch).toBe(false);
+    });
+
+    it('submits signup with email and password and requires email confirmation link', async () => {
       mockSupabase.auth.signUp.mockResolvedValue({
         data: {
           user: {
@@ -96,7 +103,7 @@ describe('Authentication Operations & Flow Logic', () => {
             email: 'user@voxara.ai',
             email_confirmed_at: null,
           },
-          session: null, // Session is null until OTP verification
+          session: null, // Session is null until email link is clicked
         },
         error: null,
       });
@@ -120,48 +127,36 @@ describe('Authentication Operations & Flow Logic', () => {
       expect(res.data.session).toBeNull();
     });
 
-    it('verifies 6-digit OTP using official verifyOtp method with type signup', async () => {
-      mockSupabase.auth.verifyOtp.mockResolvedValue({
+    it('exchanges PKCE auth code for session on verification link callback', async () => {
+      mockSupabase.auth.exchangeCodeForSession.mockResolvedValue({
         data: {
-          user: { id: 'user-uuid-123', email: 'user@voxara.ai', email_confirmed_at: '2026-10-25T01:00:00Z' },
-          session: { access_token: 'fake-jwt-token', refresh_token: 'fake-refresh-token' },
+          session: { access_token: 'pkce-access-token', refresh_token: 'pkce-refresh-token' },
+          user: { id: 'verified-user-123', email: 'user@voxara.ai', email_confirmed_at: '2026-10-26T12:00:00Z' },
         },
         error: null,
       });
 
-      const res = await mockSupabase.auth.verifyOtp({
-        email: 'user@voxara.ai',
-        token: '482910',
-        type: 'signup',
-      });
+      const res = await mockSupabase.auth.exchangeCodeForSession('valid-auth-code');
 
-      expect(mockSupabase.auth.verifyOtp).toHaveBeenCalledWith({
-        email: 'user@voxara.ai',
-        token: '482910',
-        type: 'signup',
-      });
+      expect(mockSupabase.auth.exchangeCodeForSession).toHaveBeenCalledWith('valid-auth-code');
       expect(res.data.session).toBeTruthy();
       expect(res.data.user.email_confirmed_at).toBeTruthy();
     });
 
-    it('detects invalid 6-digit verification code error', async () => {
-      mockSupabase.auth.verifyOtp.mockResolvedValue({
-        data: { user: null, session: null },
-        error: new Error('Token is invalid or has expired'),
+    it('detects invalid or expired verification link error', async () => {
+      mockSupabase.auth.exchangeCodeForSession.mockResolvedValue({
+        data: { session: null, user: null },
+        error: new Error('Token has expired or is invalid'),
       });
 
-      const res = await mockSupabase.auth.verifyOtp({
-        email: 'user@voxara.ai',
-        token: '000000',
-        type: 'signup',
-      });
+      const res = await mockSupabase.auth.exchangeCodeForSession('expired-auth-code');
 
       expect(res.error).toBeTruthy();
       const lower = res.error.message.toLowerCase();
-      expect(lower.includes('invalid') || lower.includes('expired')).toBe(true);
+      expect(lower.includes('expired') || lower.includes('invalid')).toBe(true);
     });
 
-    it('resends OTP with type signup and respects rate limit notice', async () => {
+    it('resends verification email link with signup type and respects rate limit', async () => {
       mockSupabase.auth.resend.mockResolvedValue({
         data: {},
         error: null,
@@ -170,17 +165,23 @@ describe('Authentication Operations & Flow Logic', () => {
       const res = await mockSupabase.auth.resend({
         type: 'signup',
         email: 'user@voxara.ai',
+        options: {
+          emailRedirectTo: 'http://localhost:5173',
+        },
       });
 
       expect(mockSupabase.auth.resend).toHaveBeenCalledWith({
         type: 'signup',
         email: 'user@voxara.ai',
+        options: {
+          emailRedirectTo: 'http://localhost:5173',
+        },
       });
       expect(res.error).toBeNull();
     });
   });
 
-  describe('Step 5: Email/Password Login & Sign-Out', () => {
+  describe('Email/Password Login & Sign-Out', () => {
     it('authenticates user with valid email and password credentials', async () => {
       mockSupabase.auth.signInWithPassword.mockResolvedValue({
         data: {
@@ -203,7 +204,7 @@ describe('Authentication Operations & Flow Logic', () => {
       expect(res.error).toBeNull();
     });
 
-    it('detects unconfirmed email during login and flags for OTP verification', async () => {
+    it('detects unconfirmed email during login and prompts user to click verification link', async () => {
       mockSupabase.auth.signInWithPassword.mockResolvedValue({
         data: { user: null, session: null },
         error: new Error('Email not confirmed'),

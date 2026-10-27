@@ -2,16 +2,19 @@ import React, { useState } from 'react';
 import { ASSISTANT_STATES } from '../../types/assistant';
 import type { AssistantState } from '../../types/assistant';
 import { useAuth } from '../../hooks/useAuth';
-import { LogOut } from 'lucide-react';
+import { LogOut, Bell } from 'lucide-react';
+import type { DrawerTab } from '../assistant/ActivityDrawer';
 
 interface HeaderProps {
   currentState: AssistantState;
+  onOpenDrawer?: (tab: DrawerTab) => void;
+  unreadCount?: number;
 }
 
 /**
  * Minimalist top navigation bar with brand badge, live state pill, and authenticated user profile with sign-out.
  */
-export const Header: React.FC<HeaderProps> = ({ currentState }) => {
+export const Header: React.FC<HeaderProps> = ({ currentState, onOpenDrawer, unreadCount = 0 }) => {
   const metadata = ASSISTANT_STATES[currentState];
   const { user, signOut } = useAuth();
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -40,7 +43,7 @@ export const Header: React.FC<HeaderProps> = ({ currentState }) => {
         </div>
 
         {/* Right side: Status label & User session controls */}
-        <div className="flex items-center gap-2.5 sm:gap-3">
+        <div className="flex items-center gap-2 sm:gap-2.5">
           {/* Small unobtrusive status label */}
           <div
             className="hidden sm:flex items-center gap-2 px-3 py-1 bg-white/80 border border-neutral-200/80 rounded-full shadow-2xs text-xs text-neutral-600"
@@ -52,6 +55,23 @@ export const Header: React.FC<HeaderProps> = ({ currentState }) => {
             />
             <span className="font-medium text-neutral-700">{metadata.label}</span>
           </div>
+
+          {/* Notification bell button */}
+          {user && onOpenDrawer && (
+            <button
+              onClick={() => onOpenDrawer('notifications')}
+              title="View persistent alerts & approaching deadlines"
+              className="relative p-1.5 bg-white/90 border border-neutral-200/90 rounded-full text-neutral-600 hover:text-purple-700 hover:bg-purple-50 transition-all cursor-pointer shadow-2xs"
+              aria-label="View notifications"
+            >
+              <Bell className="w-4 h-4" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center animate-pulse">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </button>
+          )}
 
           {/* Authenticated user pill & sign-out action */}
           {user && (

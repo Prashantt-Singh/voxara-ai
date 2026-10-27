@@ -240,6 +240,7 @@ async def save_shared_opportunity(data: OpportunityCreate) -> Opportunity:
                 existing.verified_at = data.verified_at
             await session.commit()
             await session.refresh(existing)
+            setattr(existing, "_is_new", False)
             return existing
 
         new_opp = Opportunity(
@@ -262,6 +263,7 @@ async def save_shared_opportunity(data: OpportunityCreate) -> Opportunity:
         session.add(new_opp)
         await session.commit()
         await session.refresh(new_opp)
+        setattr(new_opp, "_is_new", True)
         return new_opp
 
 
@@ -530,10 +532,13 @@ async def create_user_notification(data: NotificationCreate) -> Optional[Notific
     Deduplicates based on content_hash to prevent alert fatigue.
     """
     await get_or_create_user(user_id=data.user_id)
-    content_hash = compute_content_hash(
-        url=f"user:{data.user_id}:{data.opportunity_id or 'general'}",
-        title=data.title,
-    )
+    if getattr(data, "custom_content_hash", None):
+        content_hash = data.custom_content_hash
+    else:
+        content_hash = compute_content_hash(
+            url=f"user:{data.user_id}:{data.opportunity_id or 'general'}:{data.type}",
+            title=data.title,
+        )
 
     async with db_manager.session() as session:
         # Check duplicate
@@ -556,10 +561,42 @@ async def create_user_notification(data: NotificationCreate) -> Optional[Notific
             requires_confirmation=data.requires_confirmation,
             confirmation_token=data.confirmation_token,
         )
-        session.add(notif)
-        await session.commit()
-        await session.refresh(notif)
-        return notif
+        try:
+            session.add(notif)
+            await session.commit()
+            await session.refresh(notif)
+            return notif
+        except Exception as exc:
+            logger.debug("Duplicate or race collision for notification hash '%s': %s", content_hash, exc)
+            await session.rollback()
+            return None
+
+
+async def list_users_with_preferences(limit: int = 500) -> List[User]:
+    """Retrieves all registered users with their preferences preloaded."""
+    async with db_manager.session() as session:
+        result = await session.execute(
+            select(User).options(selectinload(User.preferences)).limit(limit)
+        )
+        return list(result.scalars().all())
+
+
+async def list_user_saved_opportunities_with_deadlines(limit: int = 500) -> List[SavedOpportunity]:
+    """
+    Retrieves all user-saved opportunities that have deadlines approaching in the future.
+    """
+    now = datetime.now(timezone.utc)
+    async with db_manager.session() as session:
+        query = (
+            select(SavedOpportunity)
+            .join(Opportunity, SavedOpportunity.opportunity_id == Opportunity.id)
+            .options(selectinload(SavedOpportunity.opportunity))
+            .where(Opportunity.deadline.is_not(None), Opportunity.deadline >= now)
+            .order_by(Opportunity.deadline.asc())
+            .limit(limit)
+        )
+        result = await session.execute(query)
+        return list(result.scalars().all())
 
 
 async def list_user_notifications(
@@ -592,6 +629,20 @@ async def mark_notification_read(user_id: str, notification_id: str) -> bool:
         )
         await session.commit()
         return result.rowcount > 0
+
+
+async def mark_all_user_notifications_read(user_id: str) -> int:
+    """
+    Marks all unread notifications for a user as read.
+    """
+    async with db_manager.session() as session:
+        result = await session.execute(
+            update(Notification)
+            .where(Notification.user_id == user_id, Notification.is_read.is_(False))
+            .values(is_read=True, delivered_at=datetime.now(timezone.utc))
+        )
+        await session.commit()
+        return result.rowcount
 
 
 async def confirm_user_notification(
@@ -802,6 +853,7 @@ async def save_opportunity(data: Any) -> OpportunityModel:
     res = _opp_to_model(saved)
     res.match_score = getattr(data, "match_score", 0.8)
     res.match_reason = getattr(data, "match_reason", None)
+    res.is_new = getattr(saved, "_is_new", False)
     return res
 
 

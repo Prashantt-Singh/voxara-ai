@@ -225,3 +225,34 @@ async def get_execution_record(execution_id: str):
             detail=f"Execution with ID '{execution_id}' not found.",
         )
     return record
+
+
+@router.get("/scheduler/status")
+async def get_scheduler_status():
+    """
+    Returns current status of the background opportunity discovery and deadline engine.
+    """
+    from app.services.scheduler_service import scheduler
+    from app.config import settings
+
+    return {
+        "scheduler_enabled": settings.scheduler_enabled,
+        "enable_in_app_scheduler": settings.enable_in_app_scheduler,
+        "is_running": scheduler.is_running,
+        "interval_minutes": settings.scheduler_interval_minutes,
+        "batch_size": settings.discovery_batch_size,
+        "deadline_alert_days": settings.deadline_alert_days,
+        "last_execution": scheduler.last_summary,
+    }
+
+
+@router.post("/discovery/sweep")
+async def trigger_discovery_sweep(batch_size: Optional[int] = None):
+    """
+    Manually triggers an immediate opportunity discovery and deadline processing cycle.
+    Useful for webhook triggers, external cron jobs, and verification.
+    """
+    from app.services.scheduler_service import scheduler
+
+    summary = await scheduler.execute_discovery_cycle(batch_size=batch_size, force=True)
+    return summary

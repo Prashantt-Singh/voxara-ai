@@ -35,8 +35,15 @@ async def lifespan(app: FastAPI):
             gemini_reason,
         )
 
-    # Start autonomous background monitoring scheduler
-    scheduler.start()
+    # Start autonomous background monitoring scheduler if configured
+    if settings.scheduler_enabled and settings.enable_in_app_scheduler:
+        scheduler.start()
+    else:
+        logger.info(
+            "In-app background scheduler is disabled (SCHEDULER_ENABLED=%s, ENABLE_IN_APP_SCHEDULER=%s).",
+            settings.scheduler_enabled,
+            settings.enable_in_app_scheduler,
+        )
 
     yield
 

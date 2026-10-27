@@ -1,11 +1,9 @@
 import { createContext } from 'react';
 import type { User, Session } from '@supabase/supabase-js';
 
-export interface VerifyOtpResult {
-  success: boolean;
-  error: string | null;
-  isExpired?: boolean;
-  isInvalid?: boolean;
+export interface AuthNotice {
+  type: 'success' | 'error' | 'info';
+  message: string;
 }
 
 export interface AuthContextType {
@@ -13,13 +11,12 @@ export interface AuthContextType {
   session: Session | null;
   isLoading: boolean;
   isConfigured: boolean;
-  oauthError: string | null;
-  clearOAuthError: () => void;
+  authNotice: AuthNotice | null;
+  clearAuthNotice: () => void;
   signInWithGoogle: () => Promise<{ error: string | null }>;
   signInWithPassword: (email: string, password: string) => Promise<{ error: string | null; isUnconfirmedEmail?: boolean }>;
-  signUpWithPassword: (email: string, password: string) => Promise<{ success: boolean; error: string | null; requiresOtp: boolean }>;
-  verifyOtp: (email: string, token: string, type?: 'signup' | 'email') => Promise<VerifyOtpResult>;
-  resendOtp: (email: string, type?: 'signup' | 'email') => Promise<{ success: boolean; error: string | null }>;
+  signUpWithPassword: (email: string, password: string) => Promise<{ success: boolean; error: string | null; confirmationRequired: boolean }>;
+  resendVerificationEmail: (email: string) => Promise<{ success: boolean; error: string | null }>;
   signOut: () => Promise<{ error: string | null }>;
 }
 

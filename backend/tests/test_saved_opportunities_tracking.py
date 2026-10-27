@@ -44,6 +44,16 @@ from app.db.models import (
 )
 from app.db.tables import Opportunity, SavedOpportunity
 from app.db import repository
+from app.config import settings
+from app.services.auth_service import create_test_token
+
+TEST_SECRET = "voxara-phase5-test-secret-32-chars-long"
+
+
+def auth_headers(user_id: str) -> dict:
+    """Helper generating Authorization header with cryptographically signed test JWT."""
+    token = create_test_token(user_id=user_id, secret=TEST_SECRET)
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
@@ -56,6 +66,8 @@ def client() -> Generator[TestClient, None, None]:
 @pytest.fixture(autouse=True)
 def isolated_db(monkeypatch) -> Generator[DatabaseManager, None, None]:
     """Provides an isolated database for every test method."""
+    monkeypatch.setattr(settings, "supabase_jwt_secret", TEST_SECRET)
+    monkeypatch.setattr(settings, "require_auth", True)
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "phase5_test.db"
         mgr = DatabaseManager(database_url=f"sqlite+aiosqlite:///{db_path.as_posix()}")
@@ -103,7 +115,7 @@ async def test_save_opportunity_success(client: TestClient):
     """Authenticated user saves an opportunity and receives full details."""
     opp = await seed_test_opportunity()
 
-    headers = {"Authorization": "Bearer user_alice"}
+    headers = auth_headers("user_alice")
     res = client.post(
         "/api/opportunities/saved",
         headers=headers,
@@ -135,7 +147,7 @@ async def test_save_opportunity_success(client: TestClient):
 @pytest.mark.asyncio
 async def test_save_nonexistent_opportunity_returns_404(client: TestClient):
     """Attempting to save a non-existent opportunity returns HTTP 404."""
-    headers = {"Authorization": "Bearer user_alice"}
+    headers = auth_headers("user_alice")
     res = client.post(
         "/api/opportunities/saved",
         headers=headers,
@@ -159,7 +171,7 @@ async def test_view_saved_opportunities_list(client: TestClient):
         app_url="https://fellowship.mlh.io/apply",
     )
 
-    headers = {"Authorization": "Bearer user_alice"}
+    headers = auth_headers("user_alice")
     client.post("/api/opportunities/saved", headers=headers, json={"opportunity_id": opp1.id, "status": "saved"})
     client.post("/api/opportunities/saved", headers=headers, json={"opportunity_id": opp2.id, "status": "interested"})
 
@@ -184,7 +196,7 @@ async def test_view_saved_opportunities_list(client: TestClient):
 async def test_view_single_saved_opportunity(client: TestClient):
     """User can view an individual saved opportunity by saved_id."""
     opp = await seed_test_opportunity()
-    headers = {"Authorization": "Bearer user_alice"}
+    headers = auth_headers("user_alice")
     save_res = client.post("/api/opportunities/saved", headers=headers, json={"opportunity_id": opp.id, "status": "saved"})
     saved_id = save_res.json()["id"]
 
@@ -201,7 +213,7 @@ async def test_view_single_saved_opportunity(client: TestClient):
 @pytest.mark.asyncio
 async def test_view_unknown_saved_id_returns_404(client: TestClient):
     """Requesting an unknown saved ID returns 404."""
-    headers = {"Authorization": "Bearer user_alice"}
+    headers = auth_headers("user_alice")
     res = client.get("/api/opportunities/saved/saved_non_existent", headers=headers)
     assert res.status_code == 404
 
@@ -227,7 +239,7 @@ async def test_all_seven_tracking_statuses(client: TestClient):
     ]
 
     opp = await seed_test_opportunity()
-    headers = {"Authorization": "Bearer user_tracker"}
+    headers = auth_headers("user_tracker")
 
     # Initial save
     save_res = client.post(
@@ -261,7 +273,7 @@ async def test_all_seven_tracking_statuses(client: TestClient):
 async def test_invalid_status_rejected_with_422(client: TestClient):
     """Submitting an invalid status returns HTTP 422 Unprocessable Entity."""
     opp = await seed_test_opportunity()
-    headers = {"Authorization": "Bearer user_tracker"}
+    headers = auth_headers("user_tracker")
     save_res = client.post("/api/opportunities/saved", headers=headers, json={"opportunity_id": opp.id, "status": "saved"})
     saved_id = save_res.json()["id"]
 
@@ -277,7 +289,7 @@ async def test_invalid_status_rejected_with_422(client: TestClient):
 async def test_update_private_notes(client: TestClient):
     """User can add, update, and clear private notes on their saved opportunity."""
     opp = await seed_test_opportunity()
-    headers = {"Authorization": "Bearer user_alice"}
+    headers = auth_headers("user_alice")
     save_res = client.post("/api/opportunities/saved", headers=headers, json={"opportunity_id": opp.id, "status": "saved"})
     saved_id = save_res.json()["id"]
 
@@ -321,7 +333,7 @@ async def test_remove_saved_opportunity_preserves_shared_opportunity(client: Tes
     but DOES NOT delete the underlying shared opportunity record.
     """
     opp = await seed_test_opportunity()
-    headers = {"Authorization": "Bearer user_alice"}
+    headers = auth_headers("user_alice")
 
     save_res = client.post("/api/opportunities/saved", headers=headers, json={"opportunity_id": opp.id, "status": "saved"})
     saved_id = save_res.json()["id"]
@@ -354,7 +366,7 @@ async def test_duplicate_save_idempotency(client: TestClient, isolated_db: Datab
     idempotently without creating duplicate database rows.
     """
     opp = await seed_test_opportunity()
-    headers = {"Authorization": "Bearer user_alice"}
+    headers = auth_headers("user_alice")
 
     # First save: saved
     res1 = client.post(
@@ -422,8 +434,8 @@ async def test_multiuser_isolation_and_independence(client: TestClient):
     """
     opp = await seed_test_opportunity(title="Anthropic AI Fellow", org="Anthropic")
 
-    alice_headers = {"Authorization": "Bearer user_alice"}
-    bob_headers = {"Authorization": "Bearer user_bob"}
+    alice_headers = auth_headers("user_alice")
+    bob_headers = auth_headers("user_bob")
 
     # Alice saves as interviewing with Alice's note
     res_a = client.post(
@@ -480,8 +492,8 @@ async def test_unauthorized_cross_user_access_blocked(client: TestClient):
     """
     opp = await seed_test_opportunity()
 
-    bob_headers = {"Authorization": "Bearer user_bob"}
-    alice_headers = {"Authorization": "Bearer user_alice"}
+    bob_headers = auth_headers("user_bob")
+    alice_headers = auth_headers("user_alice")
 
     # Bob creates a saved opportunity
     save_res = client.post(
@@ -538,7 +550,7 @@ async def test_client_supplied_user_id_mismatch_rejected_with_403(client: TestCl
     If authenticated as Alice, passing ?user_id=bob returns HTTP 403 Forbidden.
     """
     opp = await seed_test_opportunity()
-    alice_headers = {"Authorization": "Bearer user_alice"}
+    alice_headers = auth_headers("user_alice")
 
     # Attempt to save with spoofed user_id query parameter
     res = client.post(
@@ -580,7 +592,7 @@ async def test_unauthenticated_request_rejected_when_strict_auth_enabled(client:
 
 @pytest.mark.asyncio
 async def test_malformed_auth_header_rejected_with_401(client: TestClient):
-    """Supplying malformed or invalid Authorization headers returns HTTP 401."""
+    """Supplying malformed, invalid, or tampered Authorization headers returns HTTP 401."""
     opp = await seed_test_opportunity()
 
     # 1. Scheme other than Bearer (e.g. Basic)
@@ -599,6 +611,38 @@ async def test_malformed_auth_header_rejected_with_401(client: TestClient):
         json={"opportunity_id": opp.id, "status": "saved"},
     )
     assert res2.status_code == 401
+
+    # 3. Plain string (not a valid JWT)
+    res3 = client.post(
+        "/api/opportunities/saved",
+        headers={"Authorization": "Bearer user_alice_plain_string"},
+        json={"opportunity_id": opp.id, "status": "saved"},
+    )
+    assert res3.status_code == 401
+    assert "signed Supabase JWT is required" in res3.json()["detail"]
+
+    # 4. Tampered JWT signature
+    valid_token = create_test_token(user_id="user_alice", secret=TEST_SECRET)
+    header_b64, payload_b64, sig_b64 = valid_token.split(".")
+    tampered_sig = ("A" if sig_b64[0] != "A" else "B") + sig_b64[1:]
+    tampered_token = f"{header_b64}.{payload_b64}.{tampered_sig}"
+    res4 = client.post(
+        "/api/opportunities/saved",
+        headers={"Authorization": f"Bearer {tampered_token}"},
+        json={"opportunity_id": opp.id, "status": "saved"},
+    )
+    assert res4.status_code == 401
+    assert "verification failed" in res4.json()["detail"].lower()
+
+    # 5. Expired token
+    expired_token = create_test_token(user_id="user_alice", secret=TEST_SECRET, expires_in=-100)
+    res5 = client.post(
+        "/api/opportunities/saved",
+        headers={"Authorization": f"Bearer {expired_token}"},
+        json={"opportunity_id": opp.id, "status": "saved"},
+    )
+    assert res5.status_code == 401
+    assert "expired" in res5.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------

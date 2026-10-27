@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import type { User, Session, AuthError } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
 import { AuthContext } from './auth-context-def';
-import type { VerifyOtpResult } from './auth-context-def';
+import type { AuthNotice } from './auth-context-def';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const configured = useMemo(() => isSupabaseConfigured(), []);
@@ -10,37 +10,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(() => Boolean(configured && supabase));
+  const [authNotice, setAuthNotice] = useState<AuthNotice | null>(null);
 
-  const [oauthError, setOauthError] = useState<string | null>(() => {
-    try {
-      if (typeof window === 'undefined') return null;
-      const urlParams = new URLSearchParams(window.location.search);
-      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-      const errorDescription =
-        urlParams.get('error_description') ||
-        hashParams.get('error_description') ||
-        urlParams.get('error') ||
-        hashParams.get('error');
-
-      return errorDescription ? decodeURIComponent(errorDescription.replace(/\+/g, ' ')) : null;
-    } catch {
-      return null;
-    }
-  });
-
-  // Clear OAuth error banner
-  const clearOAuthError = useCallback(() => {
-    setOauthError(null);
+  // Clear notice banner
+  const clearAuthNotice = useCallback(() => {
+    setAuthNotice(null);
   }, []);
 
-  // Clean URL after extracting OAuth error
-  useEffect(() => {
-    if (oauthError && typeof window !== 'undefined') {
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-  }, [oauthError]);
-
-  // Initialize and persist session
+  // Initialize and persist session + handle email verification & OAuth callback
   useEffect(() => {
     if (!configured || !supabase) {
       return;
@@ -49,37 +26,97 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const client = supabase;
     let isMounted = true;
 
-    // If URL contains PKCE auth code (e.g. from confirmation link or OAuth), exchange it for a session
-    const urlParams = new URLSearchParams(window.location.search);
-    const authCode = urlParams.get('code');
-
     const initializeAuth = async () => {
       try {
-        if (authCode) {
-          const { data, error } = await client.auth.exchangeCodeForSession(authCode);
-          if (!error && data.session && isMounted) {
-            setSession(data.session);
-            setUser(data.user);
-            setIsLoading(false);
-            window.history.replaceState({}, document.title, window.location.pathname);
-            return;
+        if (typeof window === 'undefined') return;
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const hashClean = window.location.hash.replace(/^#/, '');
+        const hashParams = new URLSearchParams(hashClean);
+
+        // 1. Detect error parameters returned in redirect (e.g. expired link, invalid token)
+        const errorDescription =
+          urlParams.get('error_description') ||
+          hashParams.get('error_description') ||
+          urlParams.get('error') ||
+          hashParams.get('error');
+
+        if (errorDescription) {
+          const decoded = decodeURIComponent(errorDescription.replace(/\+/g, ' '));
+          let friendly = decoded;
+          const lower = decoded.toLowerCase();
+
+          if (
+            lower.includes('expired') ||
+            lower.includes('otp_expired') ||
+            lower.includes('token has expired')
+          ) {
+            friendly = 'This email verification link has expired or has already been used. Please sign in or request a new verification email.';
+          } else if (lower.includes('invalid') || lower.includes('access_denied')) {
+            friendly = 'This verification link is invalid or incomplete. Please request a fresh verification link.';
           }
+
+          if (isMounted) {
+            setAuthNotice({ type: 'error', message: friendly });
+            setIsLoading(false);
+          }
+          window.history.replaceState({}, document.title, window.location.pathname);
+          return;
         }
 
-        const { data: { session: initialSession }, error } = await client.auth.getSession();
-        if (!isMounted) return;
-        if (error) {
-          console.warn('Error fetching Supabase session:', error.message);
+        // 2. Detect PKCE authorization code (?code=...) from email verification link or OAuth
+        const authCode = urlParams.get('code');
+        if (authCode) {
+          const { data, error } = await client.auth.exchangeCodeForSession(authCode);
+
+          if (error) {
+            console.warn('Code exchange error:', error.message);
+            const lower = error.message.toLowerCase();
+            let friendly = error.message;
+
+            if (
+              lower.includes('expired') ||
+              lower.includes('invalid') ||
+              lower.includes('code challenge') ||
+              lower.includes('pkce')
+            ) {
+              friendly = 'This email verification link is invalid, expired, or has already been used. Please sign in or request a new verification email.';
+            }
+
+            if (isMounted) {
+              setAuthNotice({ type: 'error', message: friendly });
+            }
+          } else if (data.session && isMounted) {
+            setSession(data.session);
+            setUser(data.user);
+            setAuthNotice({
+              type: 'success',
+              message: 'Your email has been verified successfully! Welcome to Voxara AI.',
+            });
+            window.history.replaceState({}, document.title, window.location.pathname);
+            setIsLoading(false);
+            return;
+          }
+          window.history.replaceState({}, document.title, window.location.pathname);
         }
+
+        // 3. Normal session restoration
+        const { data: { session: initialSession }, error: sessionError } = await client.auth.getSession();
+        if (!isMounted) return;
+
+        if (sessionError) {
+          console.warn('Error fetching Supabase session:', sessionError.message);
+        }
+
         setSession(initialSession);
         setUser(initialSession?.user ?? null);
         setIsLoading(false);
 
-        // If tokens existed in hash/search, clean URL cleanly
+        // Clean any residual tokens from URL safely
         if (window.location.hash.includes('access_token=') || window.location.search.includes('code=')) {
           window.history.replaceState({}, document.title, window.location.pathname);
         }
-      } catch (err) {
+      } catch {
         if (isMounted) setIsLoading(false);
       }
     };
@@ -89,11 +126,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Listen for real-time authentication state changes (login, logout, token refresh)
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, currentSession) => {
+    } = supabase.auth.onAuthStateChange((event, currentSession) => {
       if (!isMounted) return;
       setSession(currentSession);
       setUser(currentSession?.user ?? null);
       setIsLoading(false);
+
+      if (event === 'SIGNED_IN' && currentSession?.user) {
+        // If user signs in through email verification link or OAuth
+        const isEmailConfirmed = Boolean(
+          currentSession.user.email_confirmed_at ||
+          currentSession.user.confirmed_at ||
+          currentSession.user.app_metadata?.provider === 'google'
+        );
+        if (isEmailConfirmed) {
+          // ensure URL is cleaned
+          if (typeof window !== 'undefined' && (window.location.search || window.location.hash)) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        }
+      }
     });
 
     return () => {
@@ -153,7 +205,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           return {
             error: isUnconfirmed
-              ? 'Your email address is not verified yet. Please enter the 6-digit verification code.'
+              ? 'Your email address is not verified yet. Please check your inbox and click the verification link before signing in.'
               : error.message,
             isUnconfirmedEmail: isUnconfirmed,
           };
@@ -162,7 +214,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Check if user email is unconfirmed even if login returned a user object
         if (data.user && !data.user.email_confirmed_at && !data.user.confirmed_at) {
           return {
-            error: 'Your email address is not verified yet. Please enter the 6-digit verification code.',
+            error: 'Your email address is not verified yet. Please check your inbox and click the verification link before signing in.',
             isUnconfirmedEmail: true,
           };
         }
@@ -178,17 +230,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [configured]
   );
 
-  // Email/Password signup with mandatory email confirmation
+  // Email/Password signup using standard email verification link flow
   const signUpWithPassword = useCallback(
     async (
       email: string,
       password: string
-    ): Promise<{ success: boolean; error: string | null; requiresOtp: boolean }> => {
+    ): Promise<{ success: boolean; error: string | null; confirmationRequired: boolean }> => {
       if (!configured || !supabase) {
         return {
           success: false,
           error: 'Supabase is not configured. Please configure your .env file.',
-          requiresOtp: false,
+          confirmationRequired: false,
         };
       }
 
@@ -196,133 +248,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return {
           success: false,
           error: 'Password must be at least 8 characters long.',
-          requiresOtp: false,
+          confirmationRequired: false,
         };
       }
 
       try {
+        const redirectUrl = window.location.origin;
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
           options: {
-            emailRedirectTo: window.location.origin,
+            emailRedirectTo: redirectUrl,
           },
         });
 
         if (error) {
-          return { success: false, error: error.message, requiresOtp: false };
+          return { success: false, error: error.message, confirmationRequired: false };
         }
 
-        // If email confirmation is enabled, data.user is created but data.session is null until OTP is verified.
+        // Check if email confirmation is required (session will be null until the link is clicked)
         const isAlreadyConfirmed = Boolean(data.user?.email_confirmed_at || data.user?.confirmed_at);
 
         if (isAlreadyConfirmed && data.session) {
           setSession(data.session);
           setUser(data.user);
-          return { success: true, error: null, requiresOtp: false };
+          return { success: true, error: null, confirmationRequired: false };
         }
 
-        return { success: true, error: null, requiresOtp: true };
+        return { success: true, error: null, confirmationRequired: true };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { success: false, error: msg, requiresOtp: false };
+        return { success: false, error: msg, confirmationRequired: false };
       }
     },
     [configured]
   );
 
-  // Verify 6-digit OTP code using official Supabase verifyOtp
-  const verifyOtp = useCallback(
-    async (
-      email: string,
-      token: string,
-      type: 'signup' | 'email' = 'signup'
-    ): Promise<VerifyOtpResult> => {
-      if (!configured || !supabase) {
-        return {
-          success: false,
-          error: 'Supabase is not configured. Please configure your .env file.',
-        };
-      }
-
-      const cleanToken = token.trim();
-      if (!cleanToken || cleanToken.length !== 6) {
-        return {
-          success: false,
-          error: 'Please enter a complete 6-digit verification code.',
-          isInvalid: true,
-        };
-      }
-
-      try {
-        // Attempt verifyOtp with specified type (default: signup)
-        let { data, error } = await supabase.auth.verifyOtp({
-          email: email.trim(),
-          token: cleanToken,
-          type,
-        });
-
-        // Fallback retry with type 'email' if signup type failed with invalid/expired
-        if (error && type === 'signup') {
-          const lower = error.message.toLowerCase();
-          if (lower.includes('invalid') || lower.includes('expired')) {
-            const fallback = await supabase.auth.verifyOtp({
-              email: email.trim(),
-              token: cleanToken,
-              type: 'email',
-            });
-            if (!fallback.error) {
-              data = fallback.data;
-              error = null;
-            }
-          }
-        }
-
-        if (error) {
-          const lower = error.message.toLowerCase();
-          const isExpired = lower.includes('expired');
-          const isInvalid = lower.includes('invalid') || lower.includes('incorrect');
-
-          let friendlyError = error.message;
-          if (isExpired) {
-            friendlyError = 'The verification code has expired. Please request a new code.';
-          } else if (isInvalid) {
-            friendlyError = 'Invalid 6-digit verification code. Please check your email and try again.';
-          }
-
-          return {
-            success: false,
-            error: friendlyError,
-            isExpired,
-            isInvalid,
-          };
-        }
-
-        if (data.session) {
-          setSession(data.session);
-          setUser(data.user);
-        } else if (data.user) {
-          setUser(data.user);
-        }
-
-        return {
-          success: true,
-          error: null,
-        };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return {
-          success: false,
-          error: msg,
-        };
-      }
-    },
-    [configured]
-  );
-
-  // Resend 6-digit confirmation OTP respecting Supabase rate limits
-  const resendOtp = useCallback(
-    async (email: string, type: 'signup' | 'email' = 'signup'): Promise<{ success: boolean; error: string | null }> => {
+  // Resend confirmation email link respecting Supabase rate limits
+  const resendVerificationEmail = useCallback(
+    async (email: string): Promise<{ success: boolean; error: string | null }> => {
       if (!configured || !supabase) {
         return {
           success: false,
@@ -331,11 +295,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       try {
+        const redirectUrl = window.location.origin;
         const { error } = await supabase.auth.resend({
-          type: type as 'signup' | 'email_change',
+          type: 'signup',
           email: email.trim(),
           options: {
-            emailRedirectTo: window.location.origin,
+            emailRedirectTo: redirectUrl,
           },
         });
 
@@ -344,7 +309,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (lower.includes('security') || lower.includes('rate limit') || lower.includes('seconds')) {
             return {
               success: false,
-              error: 'Rate limit reached. For security, please wait a minute before requesting another code.',
+              error: 'Rate limit reached. For security, please wait a minute before requesting another verification email.',
             };
           }
           return { success: false, error: error.message };
@@ -389,13 +354,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       session,
       isLoading,
       isConfigured: configured,
-      oauthError,
-      clearOAuthError,
+      authNotice,
+      clearAuthNotice,
       signInWithGoogle,
       signInWithPassword,
       signUpWithPassword,
-      verifyOtp,
-      resendOtp,
+      resendVerificationEmail,
       signOut,
     }),
     [
@@ -403,13 +367,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       session,
       isLoading,
       configured,
-      oauthError,
-      clearOAuthError,
+      authNotice,
+      clearAuthNotice,
       signInWithGoogle,
       signInWithPassword,
       signUpWithPassword,
-      verifyOtp,
-      resendOtp,
+      resendVerificationEmail,
       signOut,
     ]
   );

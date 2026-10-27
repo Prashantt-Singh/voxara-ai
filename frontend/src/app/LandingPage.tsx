@@ -1,16 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAssistantState } from '../hooks/useAssistantState';
 import { useVoiceSession } from '../hooks/useVoiceSession';
 import { AssistantOrb } from '../components/assistant/AssistantOrb';
 import { MessageInput } from '../components/assistant/MessageInput';
 import { StateSelector } from '../components/assistant/StateSelector';
 import { ActivityDrawer } from '../components/assistant/ActivityDrawer';
+import type { DrawerTab } from '../components/assistant/ActivityDrawer';
 import { Header } from '../components/layout/Header';
 import { Container } from '../components/layout/Container';
+import { useAuth } from '../hooks/useAuth';
 import { ASSISTANT_STATES } from '../types/assistant';
-import { Info, Sparkles, AlertCircle, Radio, PhoneOff, ShieldAlert, Compass, BookmarkCheck, Activity } from 'lucide-react';
+import { voxaraService } from '../lib/voxaraService';
+import { Info, Sparkles, AlertCircle, Radio, PhoneOff, ShieldAlert, Compass, BookmarkCheck, Activity, CheckCircle2, X, Bell, Sliders } from 'lucide-react';
 
 export const LandingPage: React.FC = () => {
+  const { user, authNotice, clearAuthNotice } = useAuth();
   // Manual state override for UI development & previewing states
   const { state: manualState, setState: setManualState } = useAssistantState('idle');
   const [manualMode, setManualMode] = useState(false);
@@ -31,7 +35,19 @@ export const LandingPage: React.FC = () => {
   const [lastSubmission, setLastSubmission] = useState<string | null>(null);
   const [textNotice, setTextNotice] = useState<string | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<'opportunities' | 'pipeline' | 'telemetry' | 'notifications'>('opportunities');
+  const [drawerTab, setDrawerTab] = useState<DrawerTab>('opportunities');
+  const [unreadCount, setUnreadCount] = useState<number>(0);
+
+  // Fetch unread count for authenticated users
+  useEffect(() => {
+    if (user) {
+      void voxaraService.getNotifications(true).then(({ data }) => {
+        if (data) setUnreadCount(data.length);
+      });
+    } else {
+      setUnreadCount(0);
+    }
+  }, [user]);
 
   // Active assistant visual state is driven by LiveKit voice events unless manual test mode is triggered
   const effectiveState = manualMode ? manualState : voiceAssistantState;
@@ -45,7 +61,6 @@ export const LandingPage: React.FC = () => {
   };
 
   const handleMicClick = () => {
-    // When mic button is clicked, toggle the LiveKit real-time voice session
     setManualMode(false);
     setTextNotice(null);
     toggleSession();
@@ -56,16 +71,53 @@ export const LandingPage: React.FC = () => {
     setIsDrawerOpen(true);
   };
 
+  const openDrawerTab = (tab: DrawerTab) => {
+    setDrawerTab(tab);
+    setIsDrawerOpen(true);
+  };
+
   return (
     <div className="min-h-screen bg-[#FAF9F6] text-neutral-900 flex flex-col justify-between selection:bg-amber-200 selection:text-neutral-900">
       {/* Top Header */}
       <Container>
-        <Header currentState={effectiveState} />
+        <Header
+          currentState={effectiveState}
+          onOpenDrawer={openDrawerTab}
+          unreadCount={unreadCount}
+        />
       </Container>
 
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col items-center justify-center py-6 sm:py-10">
         <Container className="flex flex-col items-center text-center">
+          {/* Email verification or auth success notification banner */}
+          {authNotice && (
+            <div
+              role={authNotice.type === 'error' ? 'alert' : 'status'}
+              className={`mb-6 max-w-lg mx-auto w-full px-4 py-3 rounded-2xl text-xs sm:text-sm flex items-center justify-between gap-3 shadow-2xs animate-fadeIn ${
+                authNotice.type === 'error'
+                  ? 'bg-red-50 border border-red-200 text-red-950'
+                  : 'bg-emerald-50 border border-emerald-200 text-emerald-950'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                {authNotice.type === 'error' ? (
+                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                )}
+                <span className="font-medium">{authNotice.message}</span>
+              </div>
+              <button
+                onClick={clearAuthNotice}
+                className="text-neutral-400 hover:text-neutral-600 cursor-pointer p-0.5"
+                aria-label="Dismiss banner"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           {/* LiveKit Voice Connection Status Badge */}
           {voiceStatus !== 'disconnected' && (
             <div className="mb-6 flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium border transition-all animate-fadeIn shadow-xs bg-white/90 backdrop-blur-xs">
@@ -141,30 +193,35 @@ export const LandingPage: React.FC = () => {
           {/* Workflow Quick Access Pills */}
           <div className="flex flex-wrap items-center justify-center gap-2 mb-4 max-w-lg">
             <button
-              onClick={() => {
-                setDrawerTab('opportunities');
-                setIsDrawerOpen(true);
-              }}
+              onClick={() => openDrawerTab('opportunities')}
               className="px-3 py-1.5 rounded-full text-xs font-medium bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/80 transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
             >
               <Compass className="w-3.5 h-3.5 text-amber-600" />
-              <span>Opportunity Hunter</span>
+              <span>Opportunities</span>
             </button>
             <button
-              onClick={() => {
-                setDrawerTab('pipeline');
-                setIsDrawerOpen(true);
-              }}
+              onClick={() => openDrawerTab('pipeline')}
               className="px-3 py-1.5 rounded-full text-xs font-medium bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200/80 transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
             >
               <BookmarkCheck className="w-3.5 h-3.5 text-blue-600" />
-              <span>My Applications</span>
+              <span>Applications</span>
             </button>
             <button
-              onClick={() => {
-                setDrawerTab('telemetry');
-                setIsDrawerOpen(true);
-              }}
+              onClick={() => openDrawerTab('notifications')}
+              className="px-3 py-1.5 rounded-full text-xs font-medium bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200/80 transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+            >
+              <Bell className="w-3.5 h-3.5 text-purple-600" />
+              <span>Alerts {unreadCount > 0 && `(${unreadCount})`}</span>
+            </button>
+            <button
+              onClick={() => openDrawerTab('preferences')}
+              className="px-3 py-1.5 rounded-full text-xs font-medium bg-amber-50/70 hover:bg-amber-100 text-amber-900 border border-amber-200/80 transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+            >
+              <Sliders className="w-3.5 h-3.5 text-amber-600" />
+              <span>Criteria</span>
+            </button>
+            <button
+              onClick={() => openDrawerTab('telemetry')}
               className="px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200/80 transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
             >
               <Activity className="w-3.5 h-3.5 text-emerald-600" />

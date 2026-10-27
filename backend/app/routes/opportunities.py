@@ -256,7 +256,7 @@ async def get_upcoming_deadlines_endpoint(
 
 @router.get("/matches", response_model=MatchResponse)
 async def get_personalized_matches_endpoint(
-    user_id: str = Query(default="default_user", description="Authenticated user ID"),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     category: Optional[str] = Query(default=None, description="Filter by category: 'internship', 'hackathon', 'fellowship'"),
     domain: Optional[str] = Query(default=None, description="Optional domain keyword override"),
     remote_only: Optional[bool] = Query(default=None, description="Filter strictly for remote opportunities"),
@@ -266,10 +266,10 @@ async def get_personalized_matches_endpoint(
 ):
     """
     Matches stored opportunities against the authenticated user's preferences.
-    Guarantees user-data isolation by reading only the requested user's preference record.
+    Guarantees user-data isolation by reading only the authenticated user's preference record.
     """
     matches = await matching_service.match_user_opportunities(
-        user_id=user_id,
+        user_id=current_user.id,
         category=category,
         domain_override=domain,
         remote_only=remote_only,
@@ -279,11 +279,11 @@ async def get_personalized_matches_endpoint(
     )
     return MatchResponse(
         status="success",
-        user_id=user_id,
+        user_id=current_user.id,
         total_matched=len(matches),
         opportunities=matches,
         criteria_applied={
-            "user_id": user_id,
+            "user_id": current_user.id,
             "category": category,
             "domain": domain,
             "remote_only": remote_only,
@@ -297,12 +297,12 @@ async def get_personalized_matches_endpoint(
 @router.post("/matches", response_model=MatchResponse)
 async def query_personalized_matches_endpoint(
     req: MatchRequest,
-    user_id: str = Query(default="default_user", description="Authenticated user ID"),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
     Personalized matching endpoint supporting explicit request payload criteria and profile overrides.
     """
-    user_pref = await repository.get_user_preferences(user_id=user_id)
+    user_pref = await repository.get_user_preferences(user_id=current_user.id)
 
     active_prefs = {
         "preferred_types": [req.category] if req.category else user_pref.preferred_types,
@@ -348,7 +348,7 @@ async def query_personalized_matches_endpoint(
     final_list = matched_results[:req.limit]
     return MatchResponse(
         status="success",
-        user_id=user_id,
+        user_id=current_user.id,
         total_matched=len(final_list),
         opportunities=final_list,
         criteria_applied=req.model_dump(),

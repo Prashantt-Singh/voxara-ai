@@ -72,12 +72,91 @@ class Settings(BaseSettings):
         validation_alias="CORS_ORIGINS",
     )
 
-    # Security & authentication settings
+    # Environment mode ('development', 'test', 'staging', 'production')
+    environment: str = Field(
+        default="development",
+        validation_alias="ENVIRONMENT",
+        description="Application runtime environment mode",
+    )
+
+    # Security & Supabase authentication settings
     require_auth: bool = Field(
-        default=False,
+        default=True,
         validation_alias="REQUIRE_AUTH",
         description="Whether to enforce strict Bearer authentication on protected endpoints",
     )
+    supabase_url: str = Field(
+        default="",
+        validation_alias="SUPABASE_URL",
+        description="Supabase Project URL (e.g. https://<project-ref>.supabase.co)",
+    )
+    supabase_jwt_secret: str = Field(
+        default="",
+        validation_alias="SUPABASE_JWT_SECRET",
+        description="Supabase JWT Secret for HS256 signature verification",
+    )
+    supabase_jwks_url: str = Field(
+        default="",
+        validation_alias="SUPABASE_JWKS_URL",
+        description="Supabase JWKS URL for ES256/RS256 asymmetric signature verification",
+    )
+    supabase_jwt_audience: str = Field(
+        default="authenticated",
+        validation_alias="SUPABASE_JWT_AUDIENCE",
+        description="Expected audience ('aud') claim in Supabase access tokens",
+    )
+    supabase_jwt_issuer: str = Field(
+        default="",
+        validation_alias="SUPABASE_JWT_ISSUER",
+        description="Optional expected issuer ('iss') claim in Supabase access tokens",
+    )
+
+    # Autonomous Scheduler & Opportunity Discovery Settings
+    scheduler_enabled: bool = Field(
+        default=True,
+        validation_alias="SCHEDULER_ENABLED",
+        description="Master switch to enable or disable the scheduled opportunity discovery and deadline engine",
+    )
+    enable_in_app_scheduler: bool = Field(
+        default=True,
+        validation_alias="ENABLE_IN_APP_SCHEDULER",
+        description="Whether to run the periodic scheduler loop directly within FastAPI lifespan. Set False if running via standalone worker.",
+    )
+    scheduler_interval_minutes: int = Field(
+        default=60,
+        validation_alias="SCHEDULER_INTERVAL_MINUTES",
+        description="Interval in minutes between automated discovery and deadline processing sweeps",
+    )
+    scheduler_initial_delay_seconds: int = Field(
+        default=5,
+        validation_alias="SCHEDULER_INITIAL_DELAY_SECONDS",
+        description="Delay in seconds before the first scheduled discovery run after server startup",
+    )
+    discovery_batch_size: int = Field(
+        default=30,
+        validation_alias="DISCOVERY_BATCH_SIZE",
+        description="Maximum total opportunities to ingest per discovery cycle across all sources",
+    )
+    deadline_alert_days: int = Field(
+        default=3,
+        validation_alias="DEADLINE_ALERT_DAYS",
+        description="Number of days in advance to notify users of approaching application deadlines",
+    )
+
+    @property
+    def is_production(self) -> bool:
+        """Returns True if running in production mode."""
+        return (self.environment or "").strip().lower() in ("production", "prod")
+
+    @property
+    def is_auth_enforced(self) -> bool:
+        """
+        Security guarantee: In production, authentication cannot be disabled accidentally.
+        In development/test, honors require_auth.
+        """
+        if self.is_production:
+            return True
+        return self.require_auth
 
     @property
     def normalized_database_url(self) -> str:

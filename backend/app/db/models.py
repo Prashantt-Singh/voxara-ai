@@ -279,6 +279,7 @@ class NotificationCreate(BaseModel):
     priority: str = "normal"
     requires_confirmation: bool = False
     confirmation_token: Optional[str] = None
+    custom_content_hash: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +340,7 @@ class OpportunityModel(BaseModel):
     verified_status: str = "verified"
     verified_at: Optional[Any] = None
     discovered_at: Optional[str] = Field(default_factory=current_utc_iso)
+    is_new: bool = False
 
     model_config = {"from_attributes": True}
 

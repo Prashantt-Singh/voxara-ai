@@ -17,3 +17,5 @@ aiosqlite>=0.20.0
 httpx>=0.28.0
 pytest>=9.0.0
 pytest-asyncio>=1.4.0
+pyjwt[crypto]>=2.9.0
+cryptography>=42.0.0

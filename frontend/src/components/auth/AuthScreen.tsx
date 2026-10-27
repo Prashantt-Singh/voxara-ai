@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { OtpVerification } from './OtpVerification';
 import {
   AlertCircle,
   Mail,
@@ -10,16 +9,21 @@ import {
   Info,
   X,
   ShieldAlert,
+  MailCheck,
+  RefreshCw,
+  CheckCircle2,
+  ArrowLeft,
 } from 'lucide-react';
 
 export const AuthScreen: React.FC = () => {
   const {
     isConfigured,
-    oauthError,
-    clearOAuthError,
+    authNotice,
+    clearAuthNotice,
     signInWithGoogle,
     signInWithPassword,
     signUpWithPassword,
+    resendVerificationEmail,
   } = useAuth();
 
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
@@ -27,8 +31,12 @@ export const AuthScreen: React.FC = () => {
   const [password, setPassword] = useState<string>('');
   const [confirmPassword, setConfirmPassword] = useState<string>('');
 
-  // OTP flow state
-  const [otpEmail, setOtpEmail] = useState<string | null>(null);
+  // Email verification link flow state
+  const [verificationPendingEmail, setVerificationPendingEmail] = useState<string | null>(null);
+  const [resendCooldown, setResendCooldown] = useState<number>(0);
+  const [isResending, setIsResending] = useState<boolean>(false);
+  const [resendNotice, setResendNotice] = useState<string | null>(null);
+  const [resendError, setResendError] = useState<string | null>(null);
 
   // Form submission state
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -36,9 +44,20 @@ export const AuthScreen: React.FC = () => {
   const [isUnconfirmedError, setIsUnconfirmedError] = useState<boolean>(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState<boolean>(false);
 
+  // Cooldown countdown effect
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
+
   const resetFormState = () => {
     setErrorMessage(null);
     setIsUnconfirmedError(false);
+    setResendNotice(null);
+    setResendError(null);
   };
 
   const handleModeSwitch = (newMode: 'signin' | 'signup') => {
@@ -116,15 +135,39 @@ export const AuthScreen: React.FC = () => {
       const res = await signUpWithPassword(email, password);
       if (res.error) {
         setErrorMessage(res.error);
-      } else if (res.requiresOtp) {
-        // Transition to dedicated 6-digit OTP verification screen
-        setOtpEmail(email);
+      } else if (res.confirmationRequired) {
+        // Transition to "Check your email" confirmation screen
+        setVerificationPendingEmail(email);
+        setResendCooldown(60);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(msg);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleResendVerification = async (targetEmail: string) => {
+    if (!targetEmail || resendCooldown > 0 || isResending) return;
+
+    setIsResending(true);
+    setResendNotice(null);
+    setResendError(null);
+
+    try {
+      const res = await resendVerificationEmail(targetEmail);
+      if (res.success) {
+        setResendNotice('A fresh verification link has been sent to your email.');
+        setResendCooldown(60);
+      } else {
+        setResendError(res.error || 'Failed to resend verification email.');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setResendError(msg);
+    } finally {
+      setIsResending(false);
     }
   };
 
@@ -159,7 +202,7 @@ export const AuthScreen: React.FC = () => {
                   Supabase Environment Configuration Required
                 </p>
                 <p className="text-amber-800 leading-relaxed">
-                  To connect your <code className="bg-amber-100 font-mono px-1 py-0.5 rounded">voxara-auth</code> project, add your Supabase credentials to <code className="bg-amber-100 font-mono px-1 py-0.5 rounded">frontend/.env</code>:
+                  To connect your project, add your Supabase credentials to <code className="bg-amber-100 font-mono px-1 py-0.5 rounded">frontend/.env</code>:
                 </p>
                 <div className="bg-amber-100/70 p-2.5 rounded-lg font-mono text-[11px] text-amber-950 mt-2 space-y-0.5">
                   <p>VITE_SUPABASE_URL=https://&lt;project-id&gt;.supabase.co</p>
@@ -173,37 +216,121 @@ export const AuthScreen: React.FC = () => {
           </div>
         )}
 
-        {/* OAuth Error Alert */}
-        {oauthError && (
+        {/* Auth Notice (Success / Error from verification callback or OAuth) */}
+        {authNotice && (
           <div
-            role="alert"
-            className="mb-6 p-3.5 rounded-2xl bg-red-50 border border-red-200 text-red-900 text-xs text-left shadow-2xs flex items-start gap-2.5 animate-fadeIn"
+            role={authNotice.type === 'error' ? 'alert' : 'status'}
+            className={`mb-6 p-4 rounded-2xl text-xs text-left shadow-2xs flex items-start gap-2.5 animate-fadeIn ${
+              authNotice.type === 'error'
+                ? 'bg-red-50 border border-red-200 text-red-950'
+                : 'bg-emerald-50 border border-emerald-200 text-emerald-950'
+            }`}
           >
-            <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            {authNotice.type === 'error' ? (
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+            )}
             <div className="flex-1">
-              <p className="font-semibold text-red-950">Google Authentication Error</p>
-              <p className="text-red-800 mt-0.5">{oauthError}</p>
+              <p className="font-medium leading-relaxed">{authNotice.message}</p>
             </div>
             <button
-              onClick={clearOAuthError}
-              className="text-red-400 hover:text-red-600 cursor-pointer"
+              onClick={clearAuthNotice}
+              className="text-neutral-400 hover:text-neutral-600 cursor-pointer p-0.5"
+              aria-label="Dismiss notice"
             >
-              <X className="w-4 h-4" />
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
 
         {/* Card Frame */}
         <div className="bg-white rounded-3xl border border-neutral-200/90 p-6 sm:p-8 shadow-xs backdrop-blur-xs">
-          {otpEmail ? (
-            /* Dedicated 6-Digit OTP Verification Screen */
-            <OtpVerification
-              email={otpEmail}
-              onBackToLogin={() => {
-                setOtpEmail(null);
-                setMode('signin');
-              }}
-            />
+          {verificationPendingEmail ? (
+            /* Dedicated Check Your Email Confirmation Screen */
+            <div className="text-center animate-fadeIn">
+              <div className="mx-auto w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-center justify-center mb-4 text-amber-600 shadow-2xs">
+                <MailCheck className="w-7 h-7" />
+              </div>
+
+              <h2 className="text-xl sm:text-2xl font-bold text-neutral-900 tracking-tight">
+                Check your inbox
+              </h2>
+
+              <p className="text-xs sm:text-sm text-neutral-600 mt-2 max-w-sm mx-auto leading-relaxed">
+                We sent a confirmation link to:
+                <br />
+                <span className="font-semibold text-neutral-900 break-all">{verificationPendingEmail}</span>
+              </p>
+
+              <div className="my-5 p-3.5 bg-amber-50/70 border border-amber-200/70 rounded-xl text-left text-xs text-amber-950 flex items-start gap-2.5">
+                <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-medium">Click the link in the email to activate your account.</p>
+                  <p className="text-[11px] text-amber-800 leading-relaxed">
+                    Once clicked, you will be redirected back to Voxara AI. If you don't see the email within a minute, make sure to check your spam folder.
+                  </p>
+                </div>
+              </div>
+
+              {resendNotice && (
+                <div
+                  role="status"
+                  className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2 text-left animate-fadeIn"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{resendNotice}</span>
+                </div>
+              )}
+
+              {resendError && (
+                <div
+                  role="alert"
+                  className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-red-900 text-xs flex items-start gap-2 text-left animate-fadeIn"
+                >
+                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  <span>{resendError}</span>
+                </div>
+              )}
+
+              {/* Resend Link Action */}
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleResendVerification(verificationPendingEmail)}
+                  disabled={resendCooldown > 0 || isResending}
+                  className="text-xs font-medium text-amber-600 hover:text-amber-700 disabled:text-neutral-400 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isResending ? (
+                    <>
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                      <span>Sending verification email...</span>
+                    </>
+                  ) : resendCooldown > 0 ? (
+                    <span>Resend email in {resendCooldown}s</span>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Resend verification link</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="mt-6 pt-5 border-t border-neutral-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVerificationPendingEmail(null);
+                    setMode('signin');
+                  }}
+                  className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-800 transition-colors cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to sign in</span>
+                </button>
+              </div>
+            </div>
           ) : (
             /* Sign In / Sign Up Forms */
             <div>
@@ -291,22 +418,50 @@ export const AuthScreen: React.FC = () => {
               {errorMessage && (
                 <div
                   role="alert"
-                  className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-red-900 text-xs flex items-start gap-2 text-left animate-fadeIn"
+                  className="mb-4 p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-900 text-xs text-left animate-fadeIn"
                 >
-                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                  <div className="flex-1">
-                    <p className="font-medium">{errorMessage}</p>
-                    {isUnconfirmedError && (
-                      <button
-                        type="button"
-                        onClick={() => setOtpEmail(email)}
-                        className="mt-2 inline-flex items-center gap-1 font-semibold text-amber-700 hover:text-amber-800 underline cursor-pointer"
-                      >
-                        <span>Enter 6-digit verification code</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </button>
-                    )}
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-medium leading-relaxed">{errorMessage}</p>
+                      {isUnconfirmedError && (
+                        <div className="mt-2.5 pt-2 border-t border-red-200/80 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                          <span className="text-[11px] text-red-800">Need a fresh verification link?</span>
+                          <button
+                            type="button"
+                            onClick={() => handleResendVerification(email)}
+                            disabled={resendCooldown > 0 || isResending}
+                            className="text-xs font-semibold text-amber-800 hover:text-amber-950 underline disabled:text-neutral-400 disabled:no-underline cursor-pointer inline-flex items-center gap-1"
+                          >
+                            {isResending ? (
+                              <>
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                <span>Sending...</span>
+                              </>
+                            ) : resendCooldown > 0 ? (
+                              <span>Resend in {resendCooldown}s</span>
+                            ) : (
+                              <>
+                                <RefreshCw className="w-3 h-3" />
+                                <span>Resend link</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
+                </div>
+              )}
+
+              {/* Resend Notice when in signin mode */}
+              {resendNotice && mode === 'signin' && (
+                <div
+                  role="status"
+                  className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2 text-left animate-fadeIn"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{resendNotice}</span>
                 </div>
               )}
 
@@ -364,22 +519,6 @@ export const AuthScreen: React.FC = () => {
                       </>
                     )}
                   </button>
-
-                  <div className="text-center pt-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (email) {
-                          setOtpEmail(email);
-                        } else {
-                          setErrorMessage('Please enter your email above to verify your OTP code.');
-                        }
-                      }}
-                      className="text-xs text-neutral-500 hover:text-amber-600 transition-colors cursor-pointer"
-                    >
-                      Need to enter a 6-digit confirmation code?
-                    </button>
-                  </div>
                 </form>
               ) : (
                 /* Sign Up Form */
@@ -446,7 +585,7 @@ export const AuthScreen: React.FC = () => {
                   <div className="p-3 bg-amber-50/60 border border-amber-200/60 rounded-xl text-left flex items-start gap-2">
                     <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                     <p className="text-[11px] text-amber-900 leading-relaxed">
-                      After submitting, a <strong>6-digit confirmation code</strong> will be sent to your email to verify your account.
+                      After signing up, a <strong>confirmation link</strong> will be sent to your email to verify your account.
                     </p>
                   </div>
 
